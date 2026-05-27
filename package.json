@@ -1,0 +1,80 @@
+{
+  "name": "alaric-secure-browser",
+  "version": "1.0.0",
+  "description": "Alaric Secure Exam Browser — lockdown proctoring client",
+  "main": "main.js",
+  "scripts": {
+    "start": "env -u ELECTRON_RUN_AS_NODE electron . || electron .",
+    "build:win": "electron-builder --win --x64",
+    "build:mac": "electron-builder --mac --universal",
+    "build": "electron-builder -wm"
+  },
+  "dependencies": {
+    "node-machine-id": "^1.1.12",
+    "uiohook-napi": "^1.5.3"
+  },
+  "devDependencies": {
+    "electron": "^33.2.0",
+    "electron-builder": "^26.8.1"
+  },
+  "build": {
+    "appId": "com.alaric.securebrowser",
+    "productName": "Alaric Secure Browser",
+    "asar": true,
+    "asarUnpack": [
+      "**/node_modules/uiohook-napi/**"
+    ],
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "main.js",
+      "preload.js",
+      "src/**",
+      "assets/**",
+      "node_modules/**"
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "requestedExecutionLevel": "requireAdministrator",
+      "icon": "assets/icon.png"
+    },
+    "mac": {
+      "target": [
+        {
+          "target": "dmg",
+          "arch": [
+            "x64",
+            "arm64"
+          ]
+        }
+      ],
+      "icon": "assets/icon.png",
+      "hardenedRuntime": false,
+      "gatekeeperAssess": false,
+      "entitlements": "assets/entitlements.mac.plist",
+      "entitlementsInherit": "assets/entitlements.mac.plist"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": false,
+      "createDesktopShortcut": true,
+      "runAfterFinish": false
+    },
+    "protocols": [
+      {
+        "name": "Alaric Exam",
+        "schemes": [
+          "alaricexam"
+        ]
+      }
+    ]
+  }
+}

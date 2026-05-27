@@ -1,0 +1,646 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Alaric Secure Browser</title>
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%;background:#0f172a;color:#e2e8f0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;font-size:14px;overflow:hidden;user-select:none}
+
+/* ── App shell ── */
+#app{display:flex;flex-direction:column;height:100%}
+
+/* ── Header ── */
+header{display:flex;align-items:center;justify-content:space-between;padding:14px 28px;background:#0a1120;border-bottom:1px solid #1e3a5f;flex-shrink:0}
+.brand{display:flex;align-items:center;gap:10px;font-size:16px;font-weight:700;color:#e2e8f0}
+.brand svg{flex-shrink:0}
+.version{font-size:11px;color:#64748b;font-weight:400;margin-left:4px}
+
+/* ── Step indicator ── */
+.steps{display:flex;align-items:center;gap:0}
+.step-item{display:flex;align-items:center;gap:8px;padding:0 16px;color:#475569;font-size:12px;font-weight:600;transition:color .2s}
+.step-item.active{color:#00b4d8}
+.step-item.done{color:#22c55e}
+.step-num{width:22px;height:22px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:800;background:#1e293b;border:2px solid #334155;transition:all .2s}
+.step-item.active .step-num{background:#00b4d8;border-color:#00b4d8;color:#000}
+.step-item.done .step-num{background:#22c55e;border-color:#22c55e;color:#000}
+.step-sep{width:24px;height:2px;background:#1e293b}
+
+/* ── Main content ── */
+#content{flex:1;overflow-y:auto;display:flex;align-items:center;justify-content:center;padding:24px}
+
+/* ── Cards ── */
+.card{background:#1e293b;border:1px solid #334155;border-radius:16px;padding:36px 40px;width:100%;max-width:600px}
+.card-title{font-size:22px;font-weight:800;color:#f1f5f9;margin-bottom:6px}
+.card-sub{font-size:13px;color:#64748b;margin-bottom:28px;line-height:1.6}
+
+/* ── Step 1: URL input ── */
+.url-label{font-size:12px;font-weight:700;color:#94a3b8;text-transform:uppercase;letter-spacing:.06em;margin-bottom:8px}
+.url-input{width:100%;background:#0f172a;border:1.5px solid #334155;border-radius:10px;color:#e2e8f0;font-size:13px;padding:13px 16px;outline:none;transition:border-color .15s;font-family:inherit}
+.url-input:focus{border-color:#00b4d8}
+.url-input::placeholder{color:#475569}
+.url-hint{font-size:11px;color:#475569;margin-top:8px}
+.url-hint span{color:#00b4d8}
+
+/* ── Buttons ── */
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:8px;padding:12px 24px;border-radius:10px;font-size:14px;font-weight:700;cursor:pointer;border:none;transition:all .15s;letter-spacing:.01em}
+.btn:disabled{opacity:.4;cursor:not-allowed}
+.btn-primary{background:#00b4d8;color:#000}
+.btn-primary:hover:not(:disabled){background:#0096b4}
+.btn-ghost{background:transparent;color:#94a3b8;border:1.5px solid #334155}
+.btn-ghost:hover:not(:disabled){background:#1e293b;color:#e2e8f0}
+.btn-danger{background:#ef4444;color:#fff}
+.btn-row{display:flex;gap:12px;margin-top:28px;justify-content:flex-end}
+
+/* ── Step 2: Checks ── */
+.checks-list{display:flex;flex-direction:column;gap:10px;margin-bottom:20px}
+.check-item{display:flex;align-items:center;gap:14px;background:#0f172a;border:1px solid #1e293b;border-radius:10px;padding:12px 16px;transition:border-color .2s}
+.check-item.pass{border-color:#14532d}
+.check-item.fail{border-color:#7f1d1d}
+.check-item.warn{border-color:#78350f}
+.check-icon{width:28px;height:28px;border-radius:50%;display:flex;align-items:center;justify-content:center;flex-shrink:0;font-size:14px}
+.check-icon.loading{background:#1e293b;color:#64748b;animation:spin 1s linear infinite}
+.check-icon.pass{background:#14532d;color:#86efac}
+.check-icon.fail{background:#7f1d1d;color:#fca5a5}
+.check-icon.warn{background:#78350f;color:#fcd34d}
+.check-icon.na{background:#1e293b;color:#64748b}
+@keyframes spin{to{transform:rotate(360deg)}}
+.check-body{flex:1;min-width:0}
+.check-label{font-size:13px;font-weight:700;color:#e2e8f0;margin-bottom:2px}
+.check-msg{font-size:11px;color:#94a3b8;word-break:break-word}
+.check-msg.fail{color:#f87171}
+.check-fix{font-size:11px;color:#fbbf24;margin-top:3px;font-style:italic}
+.checks-summary{font-size:13px;padding:12px 16px;border-radius:8px;margin-bottom:20px}
+.checks-summary.all-pass{background:#052e16;color:#86efac;border:1px solid #14532d}
+.checks-summary.has-fail{background:#2d0c0c;color:#fca5a5;border:1px solid #7f1d1d}
+.checks-summary.running{background:#0c1a2e;color:#93c5fd;border:1px solid #1e3a5f}
+
+/* ── Step 3: Waiting room ── */
+.waiting-layout{display:grid;grid-template-columns:1fr 1fr;gap:20px}
+.camera-box{background:#0f172a;border:1.5px solid #1e293b;border-radius:12px;overflow:hidden;aspect-ratio:4/3;display:flex;align-items:center;justify-content:center;position:relative}
+#camera-video{width:100%;height:100%;object-fit:cover;transform:scaleX(-1)}
+.camera-placeholder{display:flex;flex-direction:column;align-items:center;gap:8px;color:#475569;font-size:12px;text-align:center;padding:16px}
+.camera-placeholder svg{width:36px;height:36px;color:#334155}
+.cam-indicator{position:absolute;top:8px;right:8px;width:8px;height:8px;border-radius:50%;background:#22c55e;animation:pulse 2s ease-in-out infinite}
+@keyframes pulse{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.5;transform:scale(.8)}}
+.waiting-info{display:flex;flex-direction:column;gap:14px}
+.proctor-status{background:#0f172a;border:1px solid #1e293b;border-radius:10px;padding:16px}
+.ps-label{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:#475569;margin-bottom:8px}
+.ps-val{font-size:14px;font-weight:600;color:#e2e8f0;display:flex;align-items:center;gap:8px}
+.ps-dot{width:8px;height:8px;border-radius:50%;flex-shrink:0}
+.ps-dot.waiting{background:#f59e0b;animation:pulse 1.5s infinite}
+.ps-dot.joined{background:#22c55e}
+.chat-box{flex:1;background:#0f172a;border:1px solid #1e293b;border-radius:10px;padding:12px;display:flex;flex-direction:column;gap:8px}
+.chat-messages{flex:1;overflow-y:auto;max-height:120px;display:flex;flex-direction:column;gap:6px}
+.chat-msg{font-size:12px;padding:5px 8px;border-radius:6px;line-height:1.4}
+.chat-msg.proctor{background:#1e3a5f;color:#93c5fd;align-self:flex-start}
+.chat-msg.system{color:#64748b;font-style:italic;font-size:11px}
+.chat-input-row{display:flex;gap:8px}
+.chat-input{flex:1;background:#0f172a;border:1px solid #334155;border-radius:7px;color:#e2e8f0;font-size:12px;padding:7px 10px;outline:none}
+.chat-input:focus{border-color:#00b4d8}
+.btn-sm{padding:7px 14px;font-size:12px;border-radius:7px}
+
+/* ── Misc ── */
+.divider{height:1px;background:#1e293b;margin:20px 0}
+.alert-banner{display:none;background:#2d0c0c;border:1px solid #7f1d1d;border-radius:8px;padding:12px 16px;color:#fca5a5;font-size:13px;margin-bottom:16px}
+.alert-banner.show{display:block}
+::-webkit-scrollbar{width:4px;height:4px}
+::-webkit-scrollbar-track{background:transparent}
+::-webkit-scrollbar-thumb{background:#334155;border-radius:2px}
+</style>
+</head>
+<body>
+<div id="app">
+  <!-- Header -->
+  <header>
+    <div class="brand">
+      <svg width="26" height="26" fill="none" viewBox="0 0 24 24">
+        <path stroke="#00B4D8" stroke-width="2" d="M9 12l2 2 4-4M7.835 4.697a3.42 3.42 0 001.946-.806 3.42 3.42 0 014.438 0 3.42 3.42 0 001.946.806 3.42 3.42 0 013.138 3.138 3.42 3.42 0 00.806 1.946 3.42 3.42 0 010 4.438 3.42 3.42 0 00-.806 1.946 3.42 3.42 0 01-3.138 3.138 3.42 3.42 0 00-1.946.806 3.42 3.42 0 01-4.438 0 3.42 3.42 0 00-1.946-.806 3.42 3.42 0 01-3.138-3.138 3.42 3.42 0 00-.806-1.946 3.42 3.42 0 010-4.438 3.42 3.42 0 00.806-1.946 3.42 3.42 0 013.138-3.138z"/>
+      </svg>
+      Alaric Secure Browser
+      <span class="version">v1.0</span>
+    </div>
+    <div class="steps">
+      <div class="step-item active" id="stp1"><div class="step-num">1</div>Access Code</div>
+      <div class="step-sep"></div>
+      <div class="step-item" id="stp2"><div class="step-num">2</div>System Check</div>
+      <div class="step-sep"></div>
+      <div class="step-item" id="stp3"><div class="step-num">3</div>Waiting Room</div>
+    </div>
+  </header>
+
+  <!-- Content -->
+  <div id="content">
+
+    <!-- ── Step 1: Access Code ── -->
+    <div class="card" id="panel-1">
+      <div class="card-title">Enter Your Exam Access Code</div>
+      <div class="card-sub">Paste the full exam URL from your invitation email. It looks like:<br>
+        <span style="color:#00b4d8;font-family:monospace">https://alaric-exam.onrender.com/exam/index.html?token=xxx</span>
+      </div>
+      <div class="alert-banner" id="url-error"></div>
+      <div class="url-label">Exam URL</div>
+      <input class="url-input" id="exam-url" type="text" placeholder="Paste your exam URL here…" autocomplete="off" spellcheck="false">
+      <div class="url-hint">Received a short code instead? Enter it here and we'll find your exam. <span>Contact support if you need help.</span></div>
+      <div class="btn-row">
+        <button class="btn btn-primary" id="btn-continue-1">Continue →</button>
+      </div>
+    </div>
+
+    <!-- ── Step 2: System Check ── -->
+    <div class="card" id="panel-2" style="display:none;max-width:680px">
+      <div class="card-title">System Check</div>
+      <div class="card-sub">We're verifying your system meets all security requirements. This takes about 15 seconds.</div>
+      <div id="checks-summary" class="checks-summary running">🔍 Running checks…</div>
+      <div class="checks-list" id="checks-list"></div>
+      <div class="btn-row">
+        <button class="btn btn-ghost" id="btn-retry" style="display:none" onclick="runChecks()">↻ Re-run Checks</button>
+        <button class="btn btn-primary" id="btn-continue-2" disabled>Continue →</button>
+      </div>
+    </div>
+
+    <!-- ── Step 3: Waiting Room ── -->
+    <div class="card" id="panel-3" style="display:none;max-width:700px">
+      <div class="card-title">Waiting for Proctor</div>
+      <div class="card-sub">Your proctor will join shortly to verify your identity and start your exam. Please stay in this window.</div>
+      <div class="waiting-layout">
+        <!-- Camera preview -->
+        <div>
+          <div style="font-size:11px;font-weight:700;color:#94a3b8;text-transform:uppercase;letter-spacing:.06em;margin-bottom:8px">Your Camera</div>
+          <div class="camera-box" id="camera-box">
+            <div class="camera-placeholder" id="cam-placeholder">
+              <svg fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24"><path d="M6.827 6.175A2.31 2.31 0 015.186 7.23c-.38.054-.757.112-1.134.175C2.999 7.51 2.25 8.27 2.25 9.204v9.592c0 .93.75 1.694 1.8 1.694h16.3c1.05 0 1.8-.763 1.8-1.694V9.204c0-.935-.749-1.694-1.8-1.8-.376-.063-.754-.12-1.134-.175a2.31 2.31 0 01-1.64-1.055L15.25 4.5a.75.75 0 00-.623-.334H9.373a.75.75 0 00-.623.334L6.827 6.175z"/><path d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/></svg>
+              <span id="cam-placeholder-text">Camera access needed</span>
+            </div>
+            <video id="camera-video" autoplay muted playsinline style="display:none"></video>
+            <div class="cam-indicator" id="cam-indicator" style="display:none"></div>
+          </div>
+          <div style="font-size:11px;color:#475569;margin-top:6px">Your proctor can see your camera feed</div>
+        </div>
+        <!-- Status -->
+        <div class="waiting-info">
+          <div class="proctor-status">
+            <div class="ps-label">Proctor Status</div>
+            <div class="ps-val" id="proctor-status-val">
+              <span class="ps-dot waiting"></span>
+              <span id="proctor-status-text">Waiting for proctor to join…</span>
+            </div>
+          </div>
+          <div class="proctor-status" id="ws-status-box">
+            <div class="ps-label">Connection</div>
+            <div class="ps-val" id="ws-status-val">
+              <span class="ps-dot waiting"></span>
+              <span id="ws-status-text">Connecting to exam server…</span>
+            </div>
+          </div>
+          <div class="chat-box">
+            <div class="ps-label">Chat with Proctor</div>
+            <div class="chat-messages" id="chat-messages">
+              <div class="chat-msg system">Chat will be active when proctor joins.</div>
+            </div>
+            <div class="chat-input-row">
+              <input class="chat-input" id="chat-input" placeholder="Type a message…" maxlength="200" disabled>
+              <button class="btn btn-primary btn-sm" id="btn-send-chat" disabled onclick="sendChat()">Send</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+  </div><!-- /content -->
+</div><!-- /app -->
+
+<script>
+const API = window.AlaricProctor;
+const platform = API?.platform || navigator.platform;
+
+// ─── State ────────────────────────────────────────────────────────────────────
+let _examUrl        = '';
+let _examHost       = '';
+let _examToken      = '';
+let _machineId      = '';
+let _cameraStream   = null;
+let _ws             = null;
+let _wsReconnect    = null;
+let _proctorJoined  = false;
+
+// WebRTC for camera stream to admin
+const _RTC_CONFIG = {
+  iceServers: [
+    { urls: 'stun:stun.l.google.com:19302' },
+    { urls: 'stun:stun1.l.google.com:19302' },
+  ]
+};
+let _camPc   = null;
+let _camIce  = [];    // Pending ICE candidates
+
+// ─── Step navigation ──────────────────────────────────────────────────────────
+function goStep(n) {
+  [1,2,3].forEach(i => {
+    document.getElementById(`panel-${i}`).style.display = i === n ? '' : 'none';
+    const s = document.getElementById(`stp${i}`);
+    s.className = 'step-item' + (i < n ? ' done' : i === n ? ' active' : '');
+    const num = s.querySelector('.step-num');
+    num.textContent = i < n ? '✓' : i;
+  });
+}
+
+// ─── Step 1: URL entry ────────────────────────────────────────────────────────
+document.getElementById('btn-continue-1').onclick = () => {
+  const raw = document.getElementById('exam-url').value.trim();
+  if (!raw) { showUrlError('Please paste your exam URL.'); return; }
+
+  let url = raw;
+  // If they just pasted a token, construct the URL
+  if (!raw.startsWith('http')) {
+    url = `https://alaric-exam.onrender.com/exam/index.html?token=${encodeURIComponent(raw)}`;
+  }
+
+  try {
+    const u = new URL(url);
+    _examUrl   = url;
+    _examHost  = u.hostname;
+    _examToken = u.searchParams.get('token') || '';
+  } catch {
+    showUrlError('Invalid URL — please paste the full exam link from your email.');
+    return;
+  }
+
+  if (!_examToken) {
+    showUrlError('No exam token found in URL. Paste the full link including ?token=…');
+    return;
+  }
+
+  hideUrlError();
+  goStep(2);
+  runChecks();
+};
+
+document.getElementById('exam-url').addEventListener('keydown', e => {
+  if (e.key === 'Enter') document.getElementById('btn-continue-1').click();
+});
+
+function showUrlError(msg) {
+  const el = document.getElementById('url-error');
+  el.textContent = '⚠ ' + msg;
+  el.classList.add('show');
+}
+function hideUrlError() {
+  document.getElementById('url-error').classList.remove('show');
+}
+
+// ─── Step 2: Machine checks ───────────────────────────────────────────────────
+const CHECK_DEFS = [
+  { id: 'displays',  label: 'Single Monitor',           critical: true },
+  { id: 'antivirus', label: 'Antivirus / Defender',     critical: true,  winOnly: true },
+  { id: 'firewall',  label: 'Firewall',                  critical: true },
+  { id: 'processes', label: 'No Prohibited Software',   critical: true },
+  { id: 'services',  label: 'No Remote Services',       critical: true,  winOnly: true },
+  { id: 'vm',        label: 'Physical Machine',          critical: true },
+  { id: 'remote',    label: 'No Active Remote Session', critical: true },
+  { id: 'camera',    label: 'Camera Available',          critical: true },
+  { id: 'mic',       label: 'Microphone Available',      critical: true },
+  { id: 'internet',  label: 'Exam Server Reachable',    critical: true },
+];
+
+async function runChecks() {
+  document.getElementById('btn-retry').style.display = 'none';
+  document.getElementById('btn-continue-2').disabled = true;
+  document.getElementById('checks-summary').className = 'checks-summary running';
+  document.getElementById('checks-summary').textContent = '🔍 Running checks…';
+
+  // Build check items
+  const list = document.getElementById('checks-list');
+  list.innerHTML = '';
+  CHECK_DEFS.forEach(c => {
+    list.innerHTML += `
+      <div class="check-item" id="chk-${c.id}">
+        <div class="check-icon loading" id="ci-${c.id}">⟳</div>
+        <div class="check-body">
+          <div class="check-label">${c.label}${c.critical ? '' : ' <span style="color:#64748b;font-size:10px">(recommended)</span>'}</div>
+          <div class="check-msg" id="cm-${c.id}">Checking…</div>
+          <div class="check-fix" id="cf-${c.id}" style="display:none"></div>
+        </div>
+      </div>`;
+  });
+
+  // Get machine ID for WS
+  _machineId = await API.getMachineId().catch(() => 'unknown');
+
+  // Run OS checks via IPC
+  const [osResults, displayCount] = await Promise.all([
+    API.runMachineChecks().catch(e => ({ error: e.message })),
+    API.getDisplayCount().catch(() => 1),
+  ]);
+
+  // Map results
+  const results = {};
+
+  // Displays
+  results.displays = displayCount === 1
+    ? { pass: true, msg: '1 display detected' }
+    : { pass: false, msg: `${displayCount} displays detected — disconnect extra monitors`, fix: 'Disconnect all external monitors, then re-run checks' };
+
+  // AV
+  results.antivirus = osResults.antivirus || { pass: true, msg: 'N/A', na: true };
+
+  // Firewall
+  results.firewall = osResults.firewall || { pass: true, msg: 'N/A', na: true };
+
+  // Processes
+  results.processes = osResults.processes || { pass: true, msg: 'N/A', na: true };
+
+  // Services
+  results.services = osResults.services || { pass: true, msg: 'N/A', na: true };
+
+  // VM
+  results.vm = osResults.virtualMachine || { pass: true, msg: 'Physical machine confirmed' };
+
+  // Remote session
+  results.remote = osResults.remoteSession || { pass: true, msg: 'No remote session' };
+
+  // Camera (browser API)
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+    stream.getTracks().forEach(t => t.stop());
+    results.camera = { pass: true, msg: 'Camera available' };
+  } catch(e) {
+    results.camera = { pass: false, msg: 'Camera not accessible — ' + (e.name === 'NotAllowedError' ? 'permission denied' : e.message), fix: 'Allow camera access in system settings, then re-run checks' };
+  }
+
+  // Mic (browser API)
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+    stream.getTracks().forEach(t => t.stop());
+    results.mic = { pass: true, msg: 'Microphone available' };
+  } catch(e) {
+    results.mic = { pass: false, msg: 'Microphone not accessible — ' + (e.name === 'NotAllowedError' ? 'permission denied' : e.message), fix: 'Allow microphone access in system settings' };
+  }
+
+  // Internet
+  try {
+    const r = await fetch(`https://${_examHost}/api/auth/ping`, { method: 'GET', signal: AbortSignal.timeout(8000) }).catch(() => null);
+    // Even a 404 means we reached the server
+    results.internet = r ? { pass: true, msg: `Connected to ${_examHost}` } : { pass: false, msg: `Cannot reach ${_examHost}`, fix: 'Check your internet connection' };
+  } catch {
+    results.internet = { pass: false, msg: `Cannot reach ${_examHost}`, fix: 'Check your internet connection' };
+  }
+
+  // Render results
+  let allCriticalPass = true;
+  let failCount = 0;
+
+  CHECK_DEFS.forEach(def => {
+    const r = results[def.id];
+    if (!r) return;
+
+    const isNA = r.na;
+    const pass = r.pass || isNA;
+    const item = document.getElementById(`chk-${def.id}`);
+    const icon = document.getElementById(`ci-${def.id}`);
+    const msg  = document.getElementById(`cm-${def.id}`);
+    const fix  = document.getElementById(`cf-${def.id}`);
+
+    item.className = 'check-item ' + (isNA ? 'pass' : pass ? 'pass' : 'fail');
+    icon.className = 'check-icon '  + (isNA ? 'na'   : pass ? 'pass' : 'fail');
+    icon.textContent = isNA ? '—' : pass ? '✓' : '✗';
+    msg.textContent = r.msg || '';
+    msg.className = 'check-msg ' + (pass ? '' : 'fail');
+
+    if (!pass && r.fix) {
+      fix.textContent = '→ ' + r.fix;
+      fix.style.display = '';
+    }
+
+    if (!pass && def.critical) { allCriticalPass = false; failCount++; }
+  });
+
+  const summary = document.getElementById('checks-summary');
+  if (allCriticalPass) {
+    summary.className = 'checks-summary all-pass';
+    summary.textContent = '✓ All checks passed — your system is ready';
+    document.getElementById('btn-continue-2').disabled = false;
+  } else {
+    summary.className = 'checks-summary has-fail';
+    summary.textContent = `✗ ${failCount} issue${failCount > 1 ? 's' : ''} found — fix the items below and re-run`;
+    document.getElementById('btn-retry').style.display = '';
+  }
+}
+
+document.getElementById('btn-continue-2').onclick = async () => {
+  goStep(3);
+  await startWaitingRoom();
+};
+
+// ─── Step 3: Waiting room ──────────────────────────────────────────────────────
+async function startWaitingRoom() {
+  await startCamera();
+  connectWs();
+}
+
+async function startCamera() {
+  const vid = document.getElementById('camera-video');
+  const ph  = document.getElementById('cam-placeholder');
+  const ind = document.getElementById('cam-indicator');
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({ video: { width: 640, height: 480, facingMode: 'user' }, audio: true });
+    _cameraStream = stream;
+    vid.srcObject = stream;
+    vid.style.display = '';
+    ph.style.display  = 'none';
+    ind.style.display = '';
+  } catch(e) {
+    document.getElementById('cam-placeholder-text').textContent = 'Camera unavailable — ' + e.name;
+  }
+}
+
+function connectWs() {
+  if (_ws && _ws.readyState < 2) return;
+  clearTimeout(_wsReconnect);
+
+  const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+  // location.host is empty in file:// — use exam host
+  const wsUrl = `wss://${_examHost}/ws`;
+
+  setWsStatus('connecting', 'Connecting to exam server…');
+  _ws = new WebSocket(wsUrl);
+
+  _ws.onopen = () => {
+    setWsStatus('joined', `Connected to ${_examHost}`);
+    _ws.send(JSON.stringify({
+      type:          'proctor_wait',
+      token:         _examToken,
+      candidateName: '',           // Backend fills from DB
+      machineId:     _machineId,
+    }));
+    addChat('system', 'Connected. Waiting for proctor to join…');
+  };
+
+  _ws.onmessage = e => {
+    let msg; try { msg = JSON.parse(e.data); } catch { return; }
+    handleWsMsg(msg);
+  };
+
+  _ws.onclose = () => {
+    setWsStatus('connecting', 'Disconnected — reconnecting…');
+    _wsReconnect = setTimeout(connectWs, 4000);
+  };
+
+  _ws.onerror = () => {};
+}
+
+function handleWsMsg(msg) {
+  if (msg.type === 'proctor_wait_ok') {
+    // Acknowledged — waiting
+  }
+
+  if (msg.type === 'proctor_joined') {
+    _proctorJoined = true;
+    setProctorStatus('joined', `Proctor joined: ${msg.proctorName || 'Proctor'}`);
+    addChat('system', `${msg.proctorName || 'Proctor'} has joined. They can see your camera.`);
+    document.getElementById('chat-input').disabled  = false;
+    document.getElementById('btn-send-chat').disabled = false;
+    // Start camera WebRTC offer to admin
+    startCameraRtc();
+  }
+
+  if (msg.type === 'proctor_chat') {
+    addChat('proctor', msg.message);
+  }
+
+  if (msg.type === 'camera_answer') {
+    handleCameraAnswer(msg.answer);
+  }
+
+  if (msg.type === 'camera_ice' && msg.dir === 'admin_to_candidate') {
+    handleCameraIce(msg.candidate);
+  }
+
+  if (msg.type === 'start_exam') {
+    addChat('system', '✓ Proctor has started your exam. Launching now…');
+    setTimeout(() => launchExam(), 1500);
+  }
+
+  if (msg.type === 'error') {
+    addChat('system', '⚠ ' + msg.message);
+  }
+}
+
+function wsSend(data) {
+  if (_ws && _ws.readyState === 1) _ws.send(JSON.stringify(data));
+}
+
+// ─── Camera WebRTC (candidate = caller) ──────────────────────────────────────
+async function startCameraRtc() {
+  if (!_cameraStream) return;
+  if (_camPc) { _camPc.close(); _camPc = null; }
+  _camIce = [];
+
+  const pc = new RTCPeerConnection(_RTC_CONFIG);
+  _camPc = pc;
+
+  _cameraStream.getTracks().forEach(t => pc.addTrack(t, _cameraStream));
+
+  pc.onicecandidate = ({ candidate }) => {
+    if (candidate) wsSend({ type: 'camera_ice', token: _examToken, candidate, dir: 'candidate_to_admin' });
+  };
+
+  pc.onconnectionstatechange = () => {
+    if (pc.connectionState === 'failed' || pc.connectionState === 'disconnected') {
+      setTimeout(startCameraRtc, 3000);    // Retry on failure
+    }
+  };
+
+  try {
+    const offer = await pc.createOffer();
+    await pc.setLocalDescription(offer);
+    wsSend({ type: 'camera_offer', token: _examToken, offer: pc.localDescription });
+  } catch(e) {
+    console.error('[camera RTC]', e);
+  }
+}
+
+async function handleCameraAnswer(answer) {
+  if (!_camPc) return;
+  try {
+    await _camPc.setRemoteDescription(new RTCSessionDescription(answer));
+    for (const c of _camIce) {
+      try { await _camPc.addIceCandidate(new RTCIceCandidate(c)); } catch {}
+    }
+    _camIce = [];
+  } catch {}
+}
+
+async function handleCameraIce(candidate) {
+  if (!_camPc || !_camPc.remoteDescription) { _camIce.push(candidate); return; }
+  try { await _camPc.addIceCandidate(new RTCIceCandidate(candidate)); } catch {}
+}
+
+// ─── Chat ─────────────────────────────────────────────────────────────────────
+function sendChat() {
+  const inp = document.getElementById('chat-input');
+  const msg = inp.value.trim();
+  if (!msg) return;
+  wsSend({ type: 'candidate_chat', token: _examToken, message: msg });
+  addChat('me', msg);
+  inp.value = '';
+}
+
+document.getElementById('chat-input').addEventListener('keydown', e => {
+  if (e.key === 'Enter') sendChat();
+});
+
+function addChat(who, text) {
+  const box = document.getElementById('chat-messages');
+  const el  = document.createElement('div');
+  el.className = 'chat-msg ' + who;
+  el.textContent = (who === 'proctor' ? 'Proctor: ' : who === 'me' ? 'You: ' : '') + text;
+  box.appendChild(el);
+  box.scrollTop = box.scrollHeight;
+}
+
+// ─── Launch exam ─────────────────────────────────────────────────────────────
+async function launchExam() {
+  // Close WS gracefully (exam page will open its own)
+  if (_ws) { _ws.close(); _ws = null; }
+  // Close camera stream (exam window will re-request if needed)
+  if (_cameraStream) { _cameraStream.getTracks().forEach(t => t.stop()); _cameraStream = null; }
+  if (_camPc) { _camPc.close(); _camPc = null; }
+
+  // Signal main process → creates kiosk exam window + starts security
+  await API.startExam(_examUrl, _examHost);
+}
+
+// ─── UI helpers ───────────────────────────────────────────────────────────────
+function setWsStatus(state, text) {
+  const dot = document.querySelector('#ws-status-val .ps-dot');
+  const span = document.getElementById('ws-status-text');
+  if (dot)  dot.className = 'ps-dot ' + (state === 'joined' ? 'joined' : 'waiting');
+  if (span) span.textContent = text;
+}
+
+function setProctorStatus(state, text) {
+  const dot  = document.querySelector('#proctor-status-val .ps-dot');
+  const span = document.getElementById('proctor-status-text');
+  if (dot)  dot.className = 'ps-dot ' + state;
+  if (span) span.textContent = text;
+}
+
+// ─── Protocol URL (alaricexam://start?token=xxx) ──────────────────────────────
+API?.onProtocolUrl?.((url) => {
+  try {
+    const u = new URL(url);
+    const token = u.searchParams.get('token');
+    if (token) {
+      document.getElementById('exam-url').value = `https://alaric-exam.onrender.com/exam/index.html?token=${token}`;
+    }
+  } catch {}
+});
+
+// ─── Boot ─────────────────────────────────────────────────────────────────────
+goStep(1);
+document.getElementById('exam-url').focus();
+</script>
+</body>
+</html>
