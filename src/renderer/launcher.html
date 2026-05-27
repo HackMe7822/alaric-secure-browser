@@ -627,10 +627,19 @@ function setProctorStatus(state, text) {
   if (span) span.textContent = text;
 }
 
-// ─── Protocol URL (alaricexam://start?token=xxx) ──────────────────────────────
-API?.onProtocolUrl?.((url) => {
+// ─── Protocol URL handler ─────────────────────────────────────────────────────
+// Handles: alaricexam://start?url=https%3A%2F%2F...  (from secure-launch page)
+//      or: alaricexam://start?token=XXXX             (legacy direct token)
+API?.onProtocolUrl?.((rawUrl) => {
   try {
-    const u = new URL(url);
+    const u = new URL(rawUrl);
+    // Prefer full URL param (from secure-launch landing page)
+    const fullUrl = u.searchParams.get('url');
+    if (fullUrl) {
+      document.getElementById('exam-url').value = decodeURIComponent(fullUrl);
+      return;
+    }
+    // Fallback: bare token param
     const token = u.searchParams.get('token');
     if (token) {
       document.getElementById('exam-url').value = `https://alaric-exam.onrender.com/exam/index.html?token=${token}`;

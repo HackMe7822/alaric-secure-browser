@@ -31,11 +31,16 @@ jobs:
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: false
 
+      - name: Rename for clean download URL
+        shell: bash
+        run: |
+          mv "dist/Alaric Secure Browser Setup 1.0.0.exe" "dist/AlaricSecureBrowser-Windows-x64.exe"
+
       - name: Upload installer artifact
         uses: actions/upload-artifact@v4
         with:
           name: Alaric-Secure-Browser-Windows-x64
-          path: dist/*.exe
+          path: dist/AlaricSecureBrowser-Windows-x64.exe
           retention-days: 30
 
   build-mac:
@@ -68,9 +73,59 @@ jobs:
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: false
 
+      - name: Rename for clean download URLs
+        run: |
+          mv "dist/Alaric Secure Browser-1.0.0.dmg"      "dist/AlaricSecureBrowser-macOS-x64.dmg"
+          mv "dist/Alaric Secure Browser-1.0.0-arm64.dmg" "dist/AlaricSecureBrowser-macOS-arm64.dmg"
+
       - name: Upload DMG artifacts
         uses: actions/upload-artifact@v4
         with:
           name: Alaric-Secure-Browser-macOS
-          path: dist/*.dmg
+          path: dist/AlaricSecureBrowser-macOS-*.dmg
           retention-days: 30
+
+  release:
+    name: Publish GitHub Release
+    needs: [build-windows, build-mac]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Download Windows artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: Alaric-Secure-Browser-Windows-x64
+          path: release-assets/
+
+      - name: Download macOS artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: Alaric-Secure-Browser-macOS
+          path: release-assets/
+
+      - name: List assets
+        run: ls -lh release-assets/
+
+      - name: Publish release (tag = latest)
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: latest
+          name: "Alaric Secure Browser — Latest Build"
+          body: |
+            ## Download
+
+            | Platform | File |
+            |---|---|
+            | **Windows 10/11 (64-bit)** | `AlaricSecureBrowser-Windows-x64.exe` |
+            | **macOS — Apple Silicon (M1/M2/M3)** | `AlaricSecureBrowser-macOS-arm64.dmg` |
+            | **macOS — Intel** | `AlaricSecureBrowser-macOS-x64.dmg` |
+
+            ### Installation notes
+            - **Windows**: Run the `.exe` as Administrator
+            - **macOS**: Drag to Applications. If Gatekeeper blocks it → System Settings → Privacy & Security → Open Anyway
+          files: release-assets/*
+          make_latest: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
