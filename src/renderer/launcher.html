@@ -252,16 +252,25 @@ document.getElementById('btn-continue-1').onclick = () => {
   if (!raw) { showUrlError('Please paste your exam URL.'); return; }
 
   let url = raw;
-  // If they just pasted a token, construct the URL
+  // If they pasted just a token (no http), construct full URL
   if (!raw.startsWith('http')) {
     url = `https://alaric-exam.onrender.com/exam/index.html?token=${encodeURIComponent(raw)}`;
   }
 
   try {
     const u = new URL(url);
-    _examUrl   = url;
-    _examHost  = u.hostname;
-    _examToken = u.searchParams.get('token') || '';
+    _examHost = u.hostname;
+
+    // Handle /e/TOKEN path format (from secure-launch page copy button)
+    const pathMatch = u.pathname.match(/^\/e\/([a-f0-9]{32,})$/i);
+    if (pathMatch) {
+      _examToken = pathMatch[1];
+      url = `${u.origin}/exam/index.html?token=${_examToken}`;
+    } else {
+      _examToken = u.searchParams.get('token') || '';
+    }
+
+    _examUrl = url;
   } catch {
     showUrlError('Invalid URL — please paste the full exam link from your email.');
     return;
