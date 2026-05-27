@@ -59,8 +59,13 @@ jobs:
       - name: Generate app icon
         run: node scripts/gen-icon.js
 
-      - name: Build macOS DMGs
-        run: npm run build:mac
+      - name: Build macOS x64 DMG
+        run: npx electron-builder --mac --x64
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: false
+
+      - name: Build macOS arm64 DMG
+        run: npx electron-builder --mac --arm64
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: false
 
