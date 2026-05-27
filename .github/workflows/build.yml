@@ -1,0 +1,72 @@
+name: Build Alaric Secure Browser
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:   # allows manual trigger from GitHub UI
+
+jobs:
+  build-windows:
+    name: Windows Installer (x64)
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Generate app icon
+        run: node scripts/gen-icon.js
+
+      - name: Build Windows installer
+        run: npm run build:win
+        env:
+          # Prevents electron-builder from trying to notarize / sign on Windows CI
+          CSC_IDENTITY_AUTO_DISCOVERY: false
+
+      - name: Upload installer artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Alaric-Secure-Browser-Windows-x64
+          path: dist/*.exe
+          retention-days: 30
+
+  build-mac:
+    name: macOS DMG (x64 + arm64)
+    runs-on: macos-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Generate app icon
+        run: node scripts/gen-icon.js
+
+      - name: Build macOS DMGs
+        run: npm run build:mac
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: false
+
+      - name: Upload DMG artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: Alaric-Secure-Browser-macOS
+          path: dist/*.dmg
+          retention-days: 30
