@@ -21,13 +21,14 @@ let isExamLive  = false;
 // ─── Window creators ──────────────────────────────────────────────────────────
 function createLauncher() {
   launcherWin = new BrowserWindow({
-    width:      960,
-    height:     700,
-    minWidth:   800,
-    minHeight:  600,
-    resizable:  false,
-    frame:      true,
-    backgroundColor: '#0f172a',
+    width:       960,
+    height:      700,
+    minWidth:    800,
+    minHeight:   600,
+    resizable:   false,
+    maximizable: false,
+    frame:       true,
+    backgroundColor: '#f1f5f9',
     webPreferences: {
       preload:          path.join(__dirname, 'preload.js'),
       contextIsolation: true,
