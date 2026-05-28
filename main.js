@@ -215,6 +215,13 @@ ipcMain.handle('get-machine-id', async () => {
 
 ipcMain.handle('open-external', (_, url) => shell.openExternal(url));
 
+ipcMain.handle('close-exam', () => {
+  if (examWin && !examWin.isDestroyed()) {
+    isExamLive = false;
+    examWin.destroy();
+  }
+});
+
 ipcMain.handle('get-screen-source', async () => {
   try {
     const { desktopCapturer } = require('electron');

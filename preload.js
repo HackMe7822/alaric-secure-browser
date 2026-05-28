@@ -32,4 +32,7 @@ contextBridge.exposeInMainWorld('AlaricProctor', {
 
   // Screen capture for exam recording (returns desktopCapturer source ID)
   getScreenSourceId: () => ipcRenderer.invoke('get-screen-source'),
+
+  // Close the exam kiosk window after submission
+  closeExam: () => ipcRenderer.invoke('close-exam'),
 });
