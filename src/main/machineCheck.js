@@ -43,6 +43,24 @@ const BLACKLISTED = [
   'vmwp','vmms',                     // Hyper-V workers
 ];
 
+// ─── Friendly display names + stop instructions ───────────────────────────────
+const PROCESS_INFO = {
+  'vmms':           { name: 'Hyper-V Virtual Machine Management', fix: 'Open Services.msc → find "Hyper-V Virtual Machine Management" → right-click → Stop. Or run: net stop vmms' },
+  'vmwp':           { name: 'Hyper-V VM Worker Process',          fix: 'Stop the Hyper-V Virtual Machine Management service: net stop vmms' },
+  'vboxservice':    { name: 'VirtualBox Guest Additions Service',  fix: 'Open Services.msc → "VirtualBox Guest Additions" → Stop, or uninstall VirtualBox' },
+  'vboxtray':       { name: 'VirtualBox System Tray',             fix: 'Close VirtualBox and stop the VBoxService in Services.msc' },
+  'vmwaretray':     { name: 'VMware Tray Process',                fix: 'Exit VMware Workstation completely' },
+  'vboxservice':    { name: 'VirtualBox Service',                  fix: 'Stop VirtualBox service: net stop VBoxService' },
+  'teamviewer':     { name: 'TeamViewer',                          fix: 'Close TeamViewer completely (right-click system tray → Exit)' },
+  'anydesk':        { name: 'AnyDesk',                             fix: 'Close AnyDesk completely (right-click system tray → Quit AnyDesk)' },
+  'obs64':          { name: 'OBS Studio',                          fix: 'Close OBS Studio before starting the exam' },
+  'obs32':          { name: 'OBS Studio',                          fix: 'Close OBS Studio before starting the exam' },
+  'obs':            { name: 'OBS Studio',                          fix: 'Close OBS Studio before starting the exam' },
+  'parsec':         { name: 'Parsec Remote Desktop',               fix: 'Quit Parsec from the system tray' },
+  'rustdesk':       { name: 'RustDesk Remote Desktop',             fix: 'Quit RustDesk from the system tray' },
+  'screenconnect':  { name: 'ConnectWise ScreenConnect',           fix: 'Stop the ScreenConnect service in Services.msc' },
+};
+
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 async function ps(cmd) {
   const { stdout } = await execAsync(
@@ -62,14 +80,43 @@ async function sh(cmd) {
 async function checkAntivirus() {
   if (process.platform !== 'win32') return { pass: true, msg: 'N/A on this OS', na: true };
   try {
+    // Step 1: Check SecurityCenter2 for any registered third-party AV/EDR
+    // (SentinelOne, CrowdStrike, Bitdefender, Kaspersky, McAfee, etc.)
+    let thirdPartyActive = null;
+    try {
+      const sc2Raw = await ps(
+        'Get-WmiObject -Namespace root/SecurityCenter2 -Class AntiVirusProduct | Select-Object displayName,productState | ConvertTo-Json -Compress'
+      );
+      const products = JSON.parse(sc2Raw || '[]');
+      const arr = Array.isArray(products) ? products : (products && products.displayName ? [products] : []);
+      for (const p of arr) {
+        const name = (p.displayName || '').toLowerCase();
+        if (name.includes('windows defender') || name.includes('microsoft defender')) continue;
+        // productState: bits 12-15 = 1 means enabled/active
+        const state = parseInt(p.productState) || 0;
+        const isEnabled = ((state >> 12) & 0xF) === 1;
+        if (isEnabled) { thirdPartyActive = p.displayName; break; }
+        // Some EDRs (SentinelOne, CrowdStrike) may report state differently — treat presence as active
+        if (p.displayName) { thirdPartyActive = p.displayName; break; }
+      }
+    } catch {}
+
+    if (thirdPartyActive) {
+      return { pass: true, msg: `${thirdPartyActive} is active` };
+    }
+
+    // Step 2: No third-party AV found — require Windows Defender real-time protection
     const raw = await ps('Get-MpComputerStatus | Select-Object AMServiceEnabled,AntivirusEnabled,RealTimeProtectionEnabled | ConvertTo-Json');
     const d = JSON.parse(raw);
-    if (!d.AntivirusEnabled)        return { pass: false, msg: 'Windows Defender antivirus is disabled', fix: 'Open Windows Security → Virus & threat protection → turn on' };
-    if (!d.AMServiceEnabled)        return { pass: false, msg: 'Antimalware service is stopped', fix: 'Restart Windows Defender service in Services.msc' };
-    if (!d.RealTimeProtectionEnabled) return { pass: false, msg: 'Real-time protection is off', fix: 'Open Windows Security → Virus & threat protection → turn on real-time protection' };
+    if (!d.AntivirusEnabled || !d.AMServiceEnabled) {
+      return { pass: false, msg: 'No active antivirus detected', fix: 'Enable Windows Defender: Windows Security → Virus & threat protection → turn on, or install a third-party antivirus' };
+    }
+    if (!d.RealTimeProtectionEnabled) {
+      return { pass: false, msg: 'Windows Defender real-time protection is off', fix: 'Windows Security → Virus & threat protection → Virus & threat protection settings → turn on Real-time protection' };
+    }
     return { pass: true, msg: 'Windows Defender active with real-time protection' };
   } catch(e) {
-    return { pass: false, msg: 'Could not verify antivirus status', fix: 'Ensure Windows Defender is enabled and try again' };
+    return { pass: false, msg: 'Could not verify antivirus status', fix: 'Ensure your antivirus is enabled and try again' };
   }
 }
 
@@ -109,8 +156,18 @@ async function checkProcesses() {
   } catch { return { pass: true, msg: 'Process check skipped', na: true }; }
 
   const found = BLACKLISTED.filter(b => list.some(p => p.replace('.exe','').includes(b)));
-  if (found.length > 0) return { pass: false, msg: `Must close: ${[...new Set(found)].join(', ')}`, fix: 'Close the listed applications and retry', violations: found };
-  return { pass: true, msg: 'No blacklisted applications running' };
+  if (found.length > 0) {
+    const unique = [...new Set(found)];
+    const details = unique.map(b => {
+      const info = PROCESS_INFO[b];
+      return info ? `${info.name} (${b})` : b;
+    });
+    // Use fix from first found item with known info, else generic
+    const firstInfo = unique.map(b => PROCESS_INFO[b]).find(Boolean);
+    const fix = firstInfo ? firstInfo.fix : 'Open Task Manager → find the process → End Task, or stop the service in Services.msc';
+    return { pass: false, msg: `Prohibited software running: ${details.join(', ')}`, fix, violations: unique };
+  }
+  return { pass: true, msg: 'No prohibited software running' };
 }
 
 async function checkVirtualMachine() {
