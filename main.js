@@ -135,9 +135,15 @@ function createExamWindow(examUrl) {
     if (isExamLive && examWin && !examWin.isDestroyed()) examWin.setFullScreen(true);
   });
 
-  // Keep focus on exam window
+  // Keep focus on exam window; log the focus loss as a tab_switch security event
   examWin.on('blur', () => {
-    if (isExamLive && examWin && !examWin.isDestroyed()) examWin.focus();
+    if (!isExamLive || !examWin || examWin.isDestroyed()) return;
+    examWin.focus();
+    examWin.webContents.send('security-event', {
+      type: 'tab_switch',
+      message: 'Window focus lost',
+      severity: 'warning',
+    });
   });
 
   examWin.loadURL(examUrl);
