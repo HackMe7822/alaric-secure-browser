@@ -392,7 +392,7 @@ document.getElementById('btn-continue-1').onclick = () => {
   if (!raw.startsWith('http')) {
     // Raw token or bare path — strip any leading slashes/path and use token directly
     const tokenOnly = raw.replace(/^.*\//, '').replace(/\?.*$/, '').trim();
-    url = `https://alaric-exam.onrender.com/exam/${encodeURIComponent(tokenOnly)}`;
+    url = `https://alaric-exam.onrender.com/go/${encodeURIComponent(tokenOnly)}`;
   }
 
   try {
@@ -400,22 +400,26 @@ document.getElementById('btn-continue-1').onclick = () => {
     _examHost = u.hostname;
 
     // Extract token from any URL format:
-    //   /e/TOKEN  (secure-launch page)
-    //   /exam/TOKEN  (direct exam URL)
-    //   ?token=TOKEN  (query string)
+    //   /e/TOKEN   (secure-launch page)
+    //   /go/TOKEN  (exam HTML route)
+    //   /exam/TOKEN (old format — still extract token, rebuild as /go/)
+    //   ?token=TOKEN (query string)
     const eMatch    = u.pathname.match(/^\/e\/([a-f0-9]{32,})$/i);
+    const goMatch   = u.pathname.match(/^\/go\/([a-f0-9]{32,})$/i);
     const examMatch = u.pathname.match(/^\/exam\/([a-f0-9]{32,})$/i);
     if (eMatch) {
       _examToken = eMatch[1];
+    } else if (goMatch) {
+      _examToken = goMatch[1];
     } else if (examMatch) {
       _examToken = examMatch[1];
     } else {
       _examToken = u.searchParams.get('token') || '';
     }
 
-    // Always build exam URL as /exam/TOKEN — the exam page reads the token
-    // from the URL pathname (last segment), NOT from a query string parameter.
-    _examUrl = _examToken ? `${u.origin}/exam/${_examToken}` : url;
+    // Always build exam URL as /go/TOKEN — server.js serves the exam HTML there.
+    // /exam/:token returns JSON (the API route), which causes a black screen.
+    _examUrl = _examToken ? `${u.origin}/go/${_examToken}` : url;
   } catch {
     showUrlError('Invalid URL — please paste the full exam link from your email.');
     return;
@@ -720,7 +724,7 @@ API?.onProtocolUrl?.((rawUrl) => {
     const fullUrl = u.searchParams.get('url');
     if (fullUrl) { document.getElementById('exam-url').value = decodeURIComponent(fullUrl); return; }
     const token = u.searchParams.get('token');
-    if (token)   { document.getElementById('exam-url').value = `https://alaric-exam.onrender.com/exam/index.html?token=${token}`; }
+    if (token)   { document.getElementById('exam-url').value = `https://alaric-exam.onrender.com/go/${token}`; }
   } catch {}
 });
 

@@ -118,10 +118,15 @@ function createExamWindow(examUrl) {
 
   // Block dev tools keyboard shortcuts inside the page
   examWin.webContents.on('before-input-event', (_, input) => {
-    const { key, control, meta, shift } = input;
+    const { key, control, meta, shift, alt } = input;
     if (key === 'F12') return;    // already blocked by kiosk but belt-and-suspenders
     if ((control || meta) && shift && ['i','j','c'].includes(key.toLowerCase())) {
       // swallow — devtools
+    }
+    // TEMP escape: Ctrl+Shift+Alt+Q — remove before production
+    if (control && shift && alt && key.toLowerCase() === 'q') {
+      app._quitting = true;
+      app.quit();
     }
   });
 
