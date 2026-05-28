@@ -29,4 +29,7 @@ contextBridge.exposeInMainWorld('AlaricProctor', {
   onStartExam: (cb) => {
     ipcRenderer.on('start-exam-signal', (_, data) => cb(data));
   },
+
+  // Screen capture for exam recording (returns desktopCapturer source ID)
+  getScreenSourceId: () => ipcRenderer.invoke('get-screen-source'),
 });

@@ -215,6 +215,17 @@ ipcMain.handle('get-machine-id', async () => {
 
 ipcMain.handle('open-external', (_, url) => shell.openExternal(url));
 
+ipcMain.handle('get-screen-source', async () => {
+  try {
+    const { desktopCapturer } = require('electron');
+    const sources = await desktopCapturer.getSources({
+      types: ['screen'],
+      thumbnailSize: { width: 1, height: 1 },
+    });
+    return sources[0]?.id || null;
+  } catch { return null; }
+});
+
 ipcMain.handle('start-exam', async (_, { examUrl, examServerHost }) => {
   startSecurity(examServerHost);
   if (launcherWin) launcherWin.hide();
