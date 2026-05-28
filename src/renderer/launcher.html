@@ -678,10 +678,15 @@ function addChat(who, text) {
 
 // ─── Launch exam ──────────────────────────────────────────────────────────────
 async function launchExam() {
-  if (_ws) { _ws.close(); _ws = null; }
+  clearTimeout(_wsReconnect);          // Cancel any pending reconnect
+  if (_ws) { _ws.onclose = null; _ws.close(); _ws = null; }
   if (_cameraStream) { _cameraStream.getTracks().forEach(t => t.stop()); _cameraStream = null; }
   if (_camPc) { _camPc.close(); _camPc = null; }
-  await API.startExam(_examUrl, _examHost);
+  try {
+    await API.startExam(_examUrl, _examHost);
+  } catch(e) {
+    addChat('system', '⚠ Failed to launch exam window: ' + (e?.message || String(e)));
+  }
 }
 
 // ─── UI helpers ───────────────────────────────────────────────────────────────

@@ -14,9 +14,26 @@ const usbMonitor      = require('./src/main/usbMonitor');
 // ─── Single instance ──────────────────────────────────────────────────────────
 if (!app.requestSingleInstanceLock()) { app.quit(); process.exit(0); }
 
+// Windows: register as default protocol handler for alaricexam://
+if (process.platform === 'win32') {
+  app.setAsDefaultProtocolClient('alaricexam');
+}
+
 let launcherWin = null;
 let examWin     = null;
 let isExamLive  = false;
+
+// ─── Deep link helper ─────────────────────────────────────────────────────────
+function extractDeepLink(argv) {
+  return (argv || []).find(a => a.startsWith('alaricexam://')) || null;
+}
+
+function sendDeepLink(url) {
+  if (!launcherWin || launcherWin.isDestroyed()) return;
+  launcherWin.webContents.send('protocol-url', url);
+  launcherWin.show();
+  launcherWin.focus();
+}
 
 // ─── Window creators ──────────────────────────────────────────────────────────
 function createLauncher() {
@@ -43,6 +60,12 @@ function createLauncher() {
   // Allow dev tools in development
   if (process.env.NODE_ENV === 'development') {
     launcherWin.webContents.openDevTools({ mode: 'detach' });
+  }
+
+  // Windows deep link: app was launched cold with the protocol URL in argv
+  const coldLink = extractDeepLink(process.argv);
+  if (coldLink) {
+    launcherWin.webContents.once('did-finish-load', () => sendDeepLink(coldLink));
   }
 
   // Prevent accidental close — ask confirmation
@@ -77,6 +100,7 @@ function createExamWindow(examUrl) {
     frame:  false,
     backgroundColor: '#000',
     alwaysOnTop: true,
+    skipTaskbar: true,       // Remove from taskbar / Dock
     webPreferences: {
       preload:           path.join(__dirname, 'preload.js'),
       contextIsolation:  true,
@@ -87,6 +111,7 @@ function createExamWindow(examUrl) {
   });
 
   examWin.setMenu(null);
+  examWin.setAlwaysOnTop(true, 'screen-saver', 1);
 
   // Block right-click
   examWin.webContents.on('context-menu', e => e.preventDefault());
@@ -133,7 +158,7 @@ function startSecurity(examServerHost) {
     // Re-focus exam window if it lost focus
     if (examWin && !examWin.isDestroyed() && ev.severity === 'critical') {
       examWin.focus();
-      examWin.setAlwaysOnTop(true, 'screen-saver');
+      examWin.setAlwaysOnTop(true, 'screen-saver', 1);
     }
     console.warn('[security]', ev.type, ev.message);
   };
@@ -208,15 +233,13 @@ app.on('before-quit', () => {
 // macOS deep link
 app.on('open-url', (event, url) => {
   event.preventDefault();
-  if (launcherWin) {
-    launcherWin.webContents.send('protocol-url', url);
-    launcherWin.show();
-    launcherWin.focus();
-  }
+  sendDeepLink(url);
 });
 
-// Second instance — focus existing
-app.on('second-instance', () => {
+// Second instance — focus existing window + handle Windows deep link
+app.on('second-instance', (event, argv) => {
   if (launcherWin) { launcherWin.show(); launcherWin.focus(); }
   if (examWin)     { examWin.focus(); }
+  const deepLink = extractDeepLink(argv);
+  if (deepLink) sendDeepLink(deepLink);
 });
