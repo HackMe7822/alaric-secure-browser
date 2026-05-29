@@ -77,11 +77,10 @@ async function sh(cmd) {
 
 // ─── Individual checks ────────────────────────────────────────────────────────
 
-async function checkAntivirus() {
+async function checkAntivirus(autoFix = true) {
   if (process.platform !== 'win32') return { pass: true, msg: 'N/A on this OS', na: true };
   try {
-    // Step 1: Check SecurityCenter2 for any registered third-party AV/EDR
-    // (SentinelOne, CrowdStrike, Bitdefender, Kaspersky, McAfee, etc.)
+    // Step 1: third-party AV/EDR (SentinelOne, CrowdStrike, Bitdefender, etc.)
     let thirdPartyActive = null;
     try {
       const sc2Raw = await ps(
@@ -92,60 +91,96 @@ async function checkAntivirus() {
       for (const p of arr) {
         const name = (p.displayName || '').toLowerCase();
         if (name.includes('windows defender') || name.includes('microsoft defender')) continue;
-        // productState: bits 12-15 = 1 means enabled/active
         const state = parseInt(p.productState) || 0;
-        const isEnabled = ((state >> 12) & 0xF) === 1;
-        if (isEnabled) { thirdPartyActive = p.displayName; break; }
-        // Some EDRs (SentinelOne, CrowdStrike) may report state differently — treat presence as active
-        if (p.displayName) { thirdPartyActive = p.displayName; break; }
+        if (((state >> 12) & 0xF) === 1 || p.displayName) { thirdPartyActive = p.displayName; break; }
       }
     } catch {}
+    if (thirdPartyActive) return { pass: true, msg: `${thirdPartyActive} is active` };
 
-    if (thirdPartyActive) {
-      return { pass: true, msg: `${thirdPartyActive} is active` };
-    }
-
-    // Step 2: No third-party AV found — require Windows Defender real-time protection
+    // Step 2: Windows Defender
     const raw = await ps('Get-MpComputerStatus | Select-Object AMServiceEnabled,AntivirusEnabled,RealTimeProtectionEnabled | ConvertTo-Json');
     const d = JSON.parse(raw);
-    if (!d.AntivirusEnabled || !d.AMServiceEnabled) {
-      return { pass: false, msg: 'No active antivirus detected', fix: 'Enable Windows Defender: Windows Security → Virus & threat protection → turn on, or install a third-party antivirus' };
+    const rtOff = !d.RealTimeProtectionEnabled;
+    const avOff = !d.AntivirusEnabled || !d.AMServiceEnabled;
+
+    if (!rtOff && !avOff) return { pass: true, msg: 'Windows Defender active with real-time protection' };
+
+    // ── Auto-fix: enable Windows Defender RT protection ─────────────────────
+    if (autoFix) {
+      // Record original state for rollback
+      if (_snap.defenderRtDisabled === null) _snap.defenderRtDisabled = rtOff;
+      // Start service + enable RT protection
+      await execAsync('net start WinDefend 2>nul || exit 0', { timeout: 10000 }).catch(() => {});
+      await ps('Set-MpPreference -DisableRealtimeMonitoring $false -ErrorAction SilentlyContinue').catch(() => {});
+      await new Promise(r => setTimeout(r, 2000));
+      const recheck = await checkAntivirus(false);
+      if (recheck.pass) return { pass: true, msg: 'Windows Defender real-time protection enabled automatically', fixed: true };
+      return recheck;
     }
-    if (!d.RealTimeProtectionEnabled) {
-      return { pass: false, msg: 'Windows Defender real-time protection is off', fix: 'Windows Security → Virus & threat protection → Virus & threat protection settings → turn on Real-time protection' };
-    }
-    return { pass: true, msg: 'Windows Defender active with real-time protection' };
+
+    return avOff
+      ? { pass: false, msg: 'No active antivirus detected', fix: 'Enable Windows Defender: Windows Security → Virus & threat protection → turn on' }
+      : { pass: false, msg: 'Windows Defender real-time protection is off', fix: 'Windows Security → Virus & threat protection settings → turn on Real-time protection' };
   } catch(e) {
     return { pass: false, msg: 'Could not verify antivirus status', fix: 'Ensure your antivirus is enabled and try again' };
   }
 }
 
-async function checkFirewall() {
+async function checkFirewall(autoFix = true) {
   if (process.platform === 'win32') {
     try {
       const raw = await ps('Get-NetFirewallProfile | Select-Object Name,Enabled | ConvertTo-Json');
       const profiles = JSON.parse(raw);
       const arr = Array.isArray(profiles) ? profiles : [profiles];
       const disabled = arr.filter(p => !p.Enabled).map(p => p.Name);
-      if (disabled.length > 0) return { pass: false, msg: `Firewall OFF on: ${disabled.join(', ')}`, fix: 'Open Windows Security → Firewall & network protection → enable all profiles' };
-      return { pass: true, msg: 'Windows Firewall enabled on all profiles' };
+
+      if (!disabled.length) return { pass: true, msg: 'Windows Firewall enabled on all profiles' };
+
+      // ── Auto-fix: enable all profiles ──────────────────────────────────────
+      if (autoFix) {
+        // Save original profile states for rollback
+        if (!_snap.firewallProfiles) {
+          _snap.firewallProfiles = {};
+          arr.forEach(p => { _snap.firewallProfiles[p.Name] = !!p.Enabled; });
+        }
+        await ps('Set-NetFirewallProfile -All -Enabled True -ErrorAction SilentlyContinue');
+        await new Promise(r => setTimeout(r, 600));
+        const recheck = await checkFirewall(false);
+        if (recheck.pass) return { pass: true, msg: `Firewall enabled on all profiles (was off: ${disabled.join(', ')})`, fixed: true, fixedItems: disabled };
+        return recheck;
+      }
+
+      return { pass: false, msg: `Firewall OFF on: ${disabled.join(', ')}`, fix: 'Windows Security → Firewall & network protection → enable all profiles' };
     } catch {
       return { pass: false, msg: 'Could not verify firewall', fix: 'Enable Windows Firewall via Windows Security' };
     }
   } else {
     try {
       const out = await sh('/usr/libexec/ApplicationFirewall/socketfilterfw --getglobalstate');
-      if (!out.toLowerCase().includes('enabled')) return { pass: false, msg: 'macOS Firewall is off', fix: 'System Settings → Network → Firewall → Turn On' };
+      if (!out.toLowerCase().includes('enabled')) {
+        if (autoFix) {
+          await sh('/usr/libexec/ApplicationFirewall/socketfilterfw --setglobalstate on').catch(() => {});
+          if (!_snap.firewallProfiles) _snap.firewallProfiles = { macOS: false };
+          const recheck = await sh('/usr/libexec/ApplicationFirewall/socketfilterfw --getglobalstate');
+          if (recheck.toLowerCase().includes('enabled'))
+            return { pass: true, msg: 'macOS Firewall enabled automatically', fixed: true };
+        }
+        return { pass: false, msg: 'macOS Firewall is off', fix: 'System Settings → Network → Firewall → Turn On' };
+      }
       return { pass: true, msg: 'macOS Firewall enabled' };
-    } catch {
-      return { pass: true, msg: 'Firewall check skipped', na: true };
-    }
+    } catch { return { pass: true, msg: 'Firewall check skipped', na: true }; }
   }
 }
 
-// ─── Auto-fix state ──────────────────────────────────────────────────────────
-// Tracks services we've stopped so we can restore them when exam ends
-const _serviceSnapshot = new Map(); // svcName (lower) → { name, startType }
+// ─── Central snapshot — tracks EVERY change so restoreAll() can undo it ──────
+const _snap = {
+  services:           new Map(),   // svcName → { name, startType }
+  firewallProfiles:   null,        // { Domain: bool, Private: bool, Public: bool }
+  defenderRtDisabled: null,        // true if we turned RT back ON (so restore = turn OFF)
+  displayMode:        null,        // 'extended' if original was multi-monitor
+};
+// Keep alias so existing _serviceSnapshot refs work
+const _serviceSnapshot = _snap.services;
 
 // Map process names → their backing Windows service names (for disabling)
 const PROCESS_TO_SERVICE = {
@@ -206,18 +241,46 @@ async function _killProcess(name) {
   } catch {}
 }
 
-async function restoreServices() {
-  if (process.platform !== 'win32' || !_serviceSnapshot.size) return;
-  const promises = [];
-  for (const [, info] of _serviceSnapshot) {
-    // Re-enable to original startup type (but don't start — just allow it to start normally)
-    promises.push(
+// ─── Restore all changes made during pre-check / exam ────────────────────────
+async function restoreAll() {
+  const jobs = [];
+
+  // 1. Restore service startup types (Windows + macOS)
+  for (const [, info] of _snap.services) {
+    jobs.push(
       ps(`Set-Service -Name '${info.name}' -StartupType ${info.startType} -ErrorAction SilentlyContinue`).catch(() => {})
     );
   }
-  await Promise.allSettled(promises);
-  _serviceSnapshot.clear();
+  _snap.services.clear();
+
+  // 2. Restore firewall profiles
+  if (_snap.firewallProfiles) {
+    if (process.platform === 'win32') {
+      for (const [name, wasEnabled] of Object.entries(_snap.firewallProfiles)) {
+        jobs.push(
+          ps(`Set-NetFirewallProfile -Name '${name}' -Enabled ${wasEnabled ? 'True' : 'False'} -ErrorAction SilentlyContinue`).catch(() => {})
+        );
+      }
+    } else if (_snap.firewallProfiles.macOS === false) {
+      // We turned macOS firewall ON — restore to OFF
+      jobs.push(sh('/usr/libexec/ApplicationFirewall/socketfilterfw --setglobalstate off').catch(() => {}));
+    }
+    _snap.firewallProfiles = null;
+  }
+
+  // 3. Restore Windows Defender RT (only if we turned it ON from OFF)
+  if (_snap.defenderRtDisabled === true && process.platform === 'win32') {
+    jobs.push(
+      ps('Set-MpPreference -DisableRealtimeMonitoring $true -ErrorAction SilentlyContinue').catch(() => {})
+    );
+    _snap.defenderRtDisabled = null;
+  }
+
+  await Promise.allSettled(jobs);
 }
+
+// Legacy alias — keeps existing callers working
+const restoreServices = restoreAll;
 
 async function checkProcesses(autoFix = true) {
   let list = [];
@@ -273,15 +336,49 @@ async function checkVirtualMachine() {
   return { pass: true, msg: 'Physical machine confirmed' };
 }
 
-async function checkRemoteSession() {
+async function checkRemoteSession(autoFix = true) {
   try {
     if (process.platform === 'win32') {
-      // SM_REMOTESESSION = 0x1000
-      const raw = await ps("Add-Type -TypeDefinition 'using System;using System.Runtime.InteropServices;public class U32{[DllImport(\"user32.dll\")]public static extern int GetSystemMetrics(int n);}' -PassThru 2>$null | Out-Null; [U32]::GetSystemMetrics(0x1000)");
-      if (parseInt(raw) !== 0) return { pass: false, msg: 'Active remote desktop session detected', fix: 'Disconnect all remote desktop / VNC sessions' };
+      const metricRaw = await ps(
+        "Add-Type -TypeDefinition 'using System;using System.Runtime.InteropServices;public class U32{[DllImport(\"user32.dll\")]public static extern int GetSystemMetrics(int n);}' -PassThru 2>$null | Out-Null; [U32]::GetSystemMetrics(0x1000)"
+      );
+      if (parseInt(metricRaw) === 0) return { pass: true, msg: 'No remote desktop session active' };
+
+      // ── Auto-fix: logoff all remote/disconnected sessions ──────────────────
+      if (autoFix) {
+        await ps(`
+          $myId = [System.Diagnostics.Process]::GetCurrentProcess().SessionId
+          try {
+            $lines = (query session 2>$null) -split '\`n' | Select-Object -Skip 1
+            foreach ($line in $lines) {
+              if ($line -match '\\s+(\\d+)\\s') {
+                $id = [int]$Matches[1]
+                if ($id -ne $myId -and $id -ne 0) {
+                  logoff $id /server:localhost 2>$null | Out-Null
+                }
+              }
+            }
+          } catch {}
+        `).catch(() => {});
+        await new Promise(r => setTimeout(r, 1500));
+        const recheck = await checkRemoteSession(false);
+        if (recheck.pass) return { pass: true, msg: 'Remote sessions disconnected automatically', fixed: true };
+        return recheck;
+      }
+
+      return { pass: false, msg: 'Active remote desktop session detected', fix: 'Disconnect all remote desktop / VNC sessions before starting' };
     } else {
       const { stdout } = await execAsync("who 2>/dev/null | grep -v 'console' | wc -l", { timeout: 5000 });
-      if (parseInt(stdout.trim()) > 0) return { pass: false, msg: 'Remote session detected', fix: 'Disconnect all remote sessions' };
+      const count = parseInt(stdout.trim());
+      if (count > 0) {
+        if (autoFix) {
+          await execAsync("who 2>/dev/null | grep -v 'console' | awk '{print $2}' | xargs -I{} bash -c 'pkill -9 -t {} 2>/dev/null || true'", { timeout: 8000 }).catch(() => {});
+          await new Promise(r => setTimeout(r, 1000));
+          const recheck = await checkRemoteSession(false);
+          if (recheck.pass) return { pass: true, msg: 'Remote sessions disconnected', fixed: true };
+        }
+        return { pass: false, msg: 'Remote session detected', fix: 'Disconnect all remote sessions' };
+      }
     }
   } catch {}
   return { pass: true, msg: 'No remote desktop session active' };
@@ -350,24 +447,24 @@ async function checkServices(autoFix = true) {
 }
 
 // ─── Run all ──────────────────────────────────────────────────────────────────
-// config keys: antivirus, firewall, processes, services, vm, remote — false/0 = skip
-// config.autoFix (default true): auto-stop/kill violations instead of just reporting
+// config: { antivirus, firewall, processes, services, vm, remote } — false = skip
+// config.autoFix (default true): attempt to auto-fix each failing check
 async function runAll(config = {}) {
   const on      = key => config[key] !== false;
-  const autoFix = config.autoFix !== false; // default true
+  const autoFix = config.autoFix !== false;
   const NA = { pass: true, msg: 'Skipped by exam settings', na: true, skipped: true };
 
-  // Services and processes run sequentially (services first — they may back processes)
-  // Other checks run in parallel after
-  let services  = NA, processes = NA;
+  // Services + processes first (sequential, services before processes)
+  let services = NA, processes = NA;
   if (on('services'))  services  = await checkServices(autoFix).catch(e  => ({ pass: false, msg: e.message }));
   if (on('processes')) processes = await checkProcesses(autoFix).catch(e => ({ pass: false, msg: e.message }));
 
+  // Remaining checks in parallel (each auto-fixes independently)
   const [av, fw, vm, remote] = await Promise.allSettled([
-    on('antivirus') ? checkAntivirus()     : Promise.resolve(NA),
-    on('firewall')  ? checkFirewall()      : Promise.resolve(NA),
-    on('vm')        ? checkVirtualMachine(): Promise.resolve(NA),
-    on('remote')    ? checkRemoteSession() : Promise.resolve(NA),
+    on('antivirus') ? checkAntivirus(autoFix)      : Promise.resolve(NA),
+    on('firewall')  ? checkFirewall(autoFix)       : Promise.resolve(NA),
+    on('vm')        ? checkVirtualMachine()        : Promise.resolve(NA),
+    on('remote')    ? checkRemoteSession(autoFix)  : Promise.resolve(NA),
   ]);
   const r = x => x.status === 'fulfilled' ? x.value : { pass: false, msg: x.reason?.message || 'Check failed' };
 
@@ -410,4 +507,4 @@ function stopWatchdog() {
   if (_watchdogTimer) { clearInterval(_watchdogTimer); _watchdogTimer = null; }
 }
 
-module.exports = { runAll, restoreServices, startWatchdog, stopWatchdog, checkProcesses, BLACKLISTED };
+module.exports = { runAll, restoreAll, restoreServices, startWatchdog, stopWatchdog, checkProcesses, BLACKLISTED };

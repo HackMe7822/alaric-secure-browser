@@ -82,7 +82,15 @@ async function clearAutoStart() {
 async function runRelease() {
   await clearAutoStart();
   clearLockData();
-  await machineCheck.restoreServices().catch(() => {});
+
+  // Restore ALL changes: services startup types, firewall profiles, Windows Defender
+  await machineCheck.restoreAll().catch(() => {});
+
+  // Restore display mode (if we switched to single-display, restore extend)
+  if (_displayWasExtended && process.platform === 'win32') {
+    await execAsync('DisplaySwitch.exe /extend', { timeout: 8000 }).catch(() => {});
+    _displayWasExtended = false;
+  }
 
   // Delete local Electron user data (cache, logs, etc.)
   const userData = app.getPath('userData');
@@ -226,9 +234,14 @@ function sendDeepLink(url) {
 
 // ─── Display management ───────────────────────────────────────────────────────
 let _displayAddedHandler = null;
+let _displayWasExtended  = false; // true if machine had multiple monitors before we switched
 
 async function switchToInternalDisplay() {
   if (process.platform !== 'win32') return false;
+  // Record original mode before switching (so we can restore on release)
+  if (!_displayWasExtended) {
+    _displayWasExtended = screen.getAllDisplays().length > 1;
+  }
   try {
     // Primary method: DisplaySwitch.exe — built-in on every Windows install
     await execAsync('DisplaySwitch.exe /internal', { timeout: 10000 });
@@ -438,7 +451,7 @@ function createExamWindow(examUrl) {
     stopSecurity();
     machineCheck.stopWatchdog();
     stopDisplayWatcher();
-    machineCheck.restoreServices().catch(() => {});
+    machineCheck.restoreAll().catch(() => {});
     const lockData = readLockData();
     if (lockData) {
       // Machine is locked — show locked window instead of quitting
