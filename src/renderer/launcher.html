@@ -190,18 +190,22 @@ nav{background:var(--nav-bg);color:var(--nav-text);display:flex;align-items:cent
 ::-webkit-scrollbar-thumb{background:var(--border-2);border-radius:2px}
 
 /* ── Update banner ───────────────────────────────────────────────────────────── */
-#update-banner{display:none;align-items:center;gap:12px;padding:9px 20px;font-size:12px;font-weight:600;border-bottom:1px solid rgba(0,0,0,.08);flex-shrink:0}
-#update-banner.checking{display:flex;background:#f0f9ff;color:#0369a1}
-#update-banner.available{display:flex;background:#eff6ff;color:#1d4ed8}
-#update-banner.downloading{display:flex;background:#eff6ff;color:#1d4ed8}
-#update-banner.installing{display:flex;background:#f0fdf4;color:#15803d}
-#update-banner.error{display:flex;background:#fff7ed;color:#c2410c}
-#update-banner .upd-icon{font-size:14px;flex-shrink:0}
-#update-banner .upd-msg{flex:1;min-width:0}
-#update-progress-wrap{width:160px;flex-shrink:0}
-#update-progress-track{height:5px;background:rgba(0,0,0,.12);border-radius:3px;overflow:hidden;margin-bottom:3px}
-#update-progress-fill{height:100%;border-radius:3px;background:currentColor;width:0%;transition:width .4s ease}
-#update-pct{font-size:10px;text-align:center;opacity:.8}
+/* Update full-screen overlay — covers everything until check completes */
+#update-screen{
+  position:fixed;inset:0;z-index:9999;
+  background:var(--bg);
+  display:flex;flex-direction:column;align-items:center;justify-content:center;
+  gap:20px;padding:40px;text-align:center;
+}
+#update-screen.hidden{display:none}
+#update-screen-icon{font-size:3.5rem;animation:upd-pulse 2s ease-in-out infinite}
+@keyframes upd-pulse{0%,100%{transform:scale(1)}50%{transform:scale(1.08)}}
+#update-screen h2{font-size:1.4rem;font-weight:800;color:var(--text);margin:0}
+#update-screen p{font-size:14px;color:var(--text-2);max-width:340px;line-height:1.6;margin:0}
+#update-big-bar{width:320px;height:10px;background:var(--border);border-radius:5px;overflow:hidden;display:none}
+#update-big-fill{height:100%;background:var(--primary);border-radius:5px;width:0%;transition:width .4s ease}
+#update-big-pct{font-size:13px;font-weight:700;color:var(--primary)}
+#update-skip-btn{display:none;background:none;border:1px solid var(--border-2);border-radius:8px;padding:8px 18px;font-size:12px;color:var(--text-2);cursor:pointer;margin-top:8px}
 </style>
 </head>
 <body>
@@ -238,14 +242,14 @@ nav{background:var(--nav-bg);color:var(--nav-text);display:flex;align-items:cent
     </div>
   </nav>
 
-  <!-- Update banner (shown during check / download / install) -->
-  <div id="update-banner">
-    <span class="upd-icon" id="upd-icon">🔍</span>
-    <span class="upd-msg"  id="upd-msg">Checking for updates…</span>
-    <div id="update-progress-wrap" style="display:none">
-      <div id="update-progress-track"><div id="update-progress-fill"></div></div>
-      <div id="update-pct">0%</div>
-    </div>
+  <!-- Full-screen update overlay — shown until check completes or update installs -->
+  <div id="update-screen">
+    <div id="update-screen-icon">🔄</div>
+    <h2 id="update-screen-title">Checking for updates…</h2>
+    <p id="update-screen-msg">Please wait while we check for the latest version of Alaric Secure Browser.</p>
+    <div id="update-big-bar"><div id="update-big-fill"></div></div>
+    <div id="update-big-pct"></div>
+    <button id="update-skip-btn" onclick="skipUpdate()">Skip — continue with current version</button>
   </div>
 
   <!-- Content -->
@@ -1080,96 +1084,84 @@ API?.onProtocolUrl?.((rawUrl) => {
   } catch {}
 });
 
-// ─── Auto-update UI ──────────────────────────────────────────────────────────
-let _updateBlocking = false; // true while downloading/installing — blocks step advance
+// ─── Auto-update — FULL SCREEN overlay before Step 1 ─────────────────────────
+let _updateBlocking = false;
+let _updateDone     = false;
+
+function updEl(id) { return document.getElementById(id); }
+
+function showUpdateScreen(icon, title, msg, pct, allowSkip) {
+  const screen = updEl('update-screen');
+  screen.classList.remove('hidden');
+  updEl('update-screen-icon').textContent  = icon;
+  updEl('update-screen-title').textContent = title;
+  updEl('update-screen-msg').textContent   = msg;
+  const hasBar = pct !== null;
+  updEl('update-big-bar').style.display    = hasBar ? '' : 'none';
+  updEl('update-big-pct').textContent      = hasBar ? pct + '%' : '';
+  if (hasBar) updEl('update-big-fill').style.width = pct + '%';
+  updEl('update-skip-btn').style.display   = allowSkip ? '' : 'none';
+  _updateBlocking = true;
+}
+
+function hideUpdateScreen() {
+  updEl('update-screen').classList.add('hidden');
+  _updateBlocking = false;
+  _updateDone     = true;
+}
+
+function skipUpdate() { hideUpdateScreen(); }
 
 function handleUpdateStatus(d) {
-  const banner = document.getElementById('update-banner');
-  const icon   = document.getElementById('upd-icon');
-  const msg    = document.getElementById('upd-msg');
-  const progWrap = document.getElementById('update-progress-wrap');
-  const progFill = document.getElementById('update-progress-fill');
-  const progPct  = document.getElementById('update-pct');
-  const verEl    = document.getElementById('app-ver');
-
-  // Update version badge in nav
+  const verEl = updEl('app-ver');
   if (d.version) verEl.textContent = 'v' + d.version;
-
-  banner.className = '';
-  progWrap.style.display = 'none';
-  setUpdateBlock(false); // default: unblock
 
   switch (d.phase) {
     case 'checking':
-      banner.className = 'checking';
-      icon.textContent = '🔍';
-      msg.textContent  = 'Checking for updates…';
-      setUpdateBlock(true);
-      // Safety: unblock after 12s if server unreachable
-      setTimeout(() => { if (_updateBlocking) setUpdateBlock(false); }, 12000);
+      showUpdateScreen('🔍', 'Checking for updates…',
+        'Please wait — verifying you have the latest version before proceeding.',
+        null, false);
+      setTimeout(() => { if (!_updateDone) hideUpdateScreen(); }, 12000);
       break;
 
     case 'current':
     case 'dev':
-      setUpdateBlock(false);
-      banner.className = 'checking';
-      icon.textContent = '✅';
-      msg.textContent  = `v${d.version} — up to date`;
-      setTimeout(() => { banner.className = ''; }, 3000);
+      showUpdateScreen('✅', `Up to date — v${d.version}`,
+        'You have the latest version. Continuing…', null, false);
+      setTimeout(hideUpdateScreen, 1800);
       break;
 
     case 'available':
-      banner.className = 'available';
-      icon.textContent = '⬇';
-      msg.textContent  = `Update available: v${d.version} — downloading… Please wait, do not proceed.`;
-      setUpdateBlock(true);
-      // Save any entered URL so it survives the update restart
-      try { localStorage.setItem('alaric_pending_url', document.getElementById('exam-url').value || ''); } catch {}
+      try { localStorage.setItem('alaric_pending_url', updEl('exam-url')?.value || ''); } catch {}
+      showUpdateScreen('⬇', `Update available — v${d.version}`,
+        'Downloading the latest version automatically. The app will restart when ready.',
+        0, false);
       break;
 
     case 'downloading': {
-      banner.className = 'downloading';
-      icon.textContent = '⬇';
-      setUpdateBlock(true);
-      const pct = d.percent || 0;
-      const mb  = d.total ? ` (${(d.transferred/1048576).toFixed(1)} / ${(d.total/1048576).toFixed(1)} MB)` : '';
-      msg.textContent = `Downloading update v${d.version || ''}… ${pct}%${mb}`;
-      progWrap.style.display = '';
-      progFill.style.width   = pct + '%';
-      progPct.textContent    = pct + '%';
+      const pct = Math.round(d.percent || 0);
+      const mb  = d.total
+        ? `${(d.transferred/1048576).toFixed(1)} / ${(d.total/1048576).toFixed(1)} MB`
+        : 'Please wait…';
+      showUpdateScreen('⬇', `Downloading update v${d.version || ''}`,
+        mb, pct, false);
       break;
     }
 
     case 'installing':
-      banner.className = 'installing';
-      icon.textContent = '🔄';
-      msg.textContent  = `Installing update — app will restart automatically…`;
-      setUpdateBlock(true);
+      showUpdateScreen('🔄', 'Installing update…',
+        'The app will restart automatically in a moment. Please wait.', null, false);
       break;
 
     case 'pending_restart':
-      banner.className = 'checking';
-      icon.textContent = '⏸';
-      msg.textContent  = `Update v${d.version} ready — will install after exam completes`;
+      hideUpdateScreen();
       break;
 
     case 'error':
-      setUpdateBlock(false);
-      banner.className = 'error';
-      icon.textContent = '⚠';
-      msg.textContent  = `Update check failed — continuing with v${d.version || '?'}`;
-      setTimeout(() => { banner.className = ''; }, 6000);
+      showUpdateScreen('⚠', 'Update check failed',
+        `Continuing with current version. You can proceed.`, null, true);
+      setTimeout(hideUpdateScreen, 5000);
       break;
-  }
-}
-
-// Sync _updateBlocking with the actual HTML button disabled state
-function setUpdateBlock(blocked) {
-  _updateBlocking = blocked;
-  const btn1 = document.getElementById('btn-continue-1');
-  if (btn1) {
-    btn1.disabled = blocked;
-    btn1.title    = blocked ? 'Please wait — update in progress' : '';
   }
 }
 
@@ -1185,12 +1177,11 @@ if (API?.getAppVersion) {
   }).catch(() => {});
 }
 
-// Block btn-continue-1 while update is downloading/installing
+// The full-screen overlay already prevents interaction — btn wrapper kept as backup
 const _origContinue1 = document.getElementById('btn-continue-1').onclick;
 document.getElementById('btn-continue-1').onclick = async function(e) {
   if (_updateBlocking) {
-    const msg = document.getElementById('upd-msg').textContent;
-    showUrlError('Please wait — ' + msg);
+    showUrlError('Please wait — update in progress. The app will restart automatically.');
     return;
   }
   if (_origContinue1) await _origContinue1.call(this, e);
