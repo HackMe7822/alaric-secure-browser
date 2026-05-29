@@ -227,7 +227,7 @@ nav{background:var(--nav-bg);color:var(--nav-text);display:flex;align-items:cent
       </div>
       <div class="nav-sep"></div>
       <div class="nav-step" id="stp3">
-        <div class="nav-num">3</div>Waiting Room
+        <div class="nav-num">3</div>ID Verify &amp; Wait
       </div>
     </div>
 
@@ -296,6 +296,13 @@ nav{background:var(--nav-bg);color:var(--nav-text);display:flex;align-items:cent
         <div class="checks-list" id="checks-list"></div>
       </div>
       <div class="card-footer">
+        <!-- "What's next" hint — hidden until all checks pass -->
+        <div id="next-step-hint" style="display:none;font-size:12px;color:var(--success);font-weight:600;
+             background:var(--success-bg);border:1px solid var(--success-border);border-radius:6px;
+             padding:7px 12px;display:none;align-items:center;gap:7px;flex:1">
+          <span>📷</span>
+          <span>Next: upload your ID &amp; desk photos for proctor verification, then wait for exam to start</span>
+        </div>
         <button class="btn btn-secondary" id="btn-restore-display" style="display:none"
           title="Restore multi-monitor layout" onclick="restoreDisplays()">
           🖥 Restore Displays
@@ -305,17 +312,21 @@ nav{background:var(--nav-bg);color:var(--nav-text);display:flex;align-items:cent
           Re-run Checks
         </button>
         <button class="btn btn-primary" id="btn-continue-2" disabled>
-          Continue
+          Continue to ID Verification
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
         </button>
       </div>
     </div>
 
-    <!-- Step 3: Waiting Room -->
+    <!-- Step 3: ID Verification + Waiting Room -->
     <div class="card" id="panel-3" style="display:none;max-width:680px">
       <div class="card-header">
-        <div class="card-title">Identity Verification &amp; Waiting Room</div>
-        <div class="card-sub">Complete the identity check below, then wait for your proctor to start the exam.</div>
+        <div style="font-size:11px;font-weight:700;color:var(--primary);text-transform:uppercase;letter-spacing:.08em;margin-bottom:4px">Step 3 of 3</div>
+        <div class="card-title">📷 Identity Verification &amp; Waiting Room</div>
+        <div class="card-sub">
+          <strong>Action required:</strong> scan the QR code with your phone (or click "Upload from PC") to photograph your ID and desk.
+          Your proctor will review and approve before starting the exam.
+        </div>
       </div>
       <div class="card-body">
 
@@ -691,8 +702,8 @@ async function runChecks() {
       const newCount = fixResult.displayCount ?? await API.getDisplayCount().catch(() => displayCount);
       if (newCount === 1) {
         results.displays = { pass: true, msg: 'Extra display auto-disconnected — single monitor active', fixed: true };
-      // Show restore button so user can get their second monitor back if needed
-      document.getElementById('btn-restore-display').style.display = '';
+        // Show restore button so user can get their second monitor back if needed
+        document.getElementById('btn-restore-display').style.display = '';
       } else {
         results.displays = {
           pass: false,
@@ -787,6 +798,9 @@ async function runChecks() {
     sum.className = 'checks-summary all-pass';
     sum.innerHTML = `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" style="flex-shrink:0"><path d="M22 11.08V12a10 10 0 11-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>All checks passed — your system is ready`;
     document.getElementById('btn-continue-2').disabled = false;
+    // Show "what's next" hint so candidate knows what Step 3 contains
+    const nextHint = document.getElementById('next-step-hint');
+    if (nextHint) nextHint.style.display = '';
   } else {
     sum.className = 'checks-summary has-fail';
     sum.innerHTML = `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" style="flex-shrink:0"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>${failCount} issue${failCount > 1 ? 's' : ''} found — resolve the items below and re-run`;
