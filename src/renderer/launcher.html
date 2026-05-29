@@ -1118,11 +1118,16 @@ function handleUpdateStatus(d) {
       banner.className = 'checking';
       icon.textContent = '🔍';
       msg.textContent  = 'Checking for updates…';
+      _updateBlocking  = true;  // block Step 1 until check completes
+      // Safety: unblock after 12s in case server is unreachable
+      setTimeout(() => {
+        if (_updateBlocking) { _updateBlocking = false; banner.className = ''; }
+      }, 12000);
       break;
 
     case 'current':
     case 'dev':
-      // No update needed — hide after a moment
+      _updateBlocking = false; // unblock Step 1
       banner.className = 'checking';
       icon.textContent = '✅';
       msg.textContent  = `v${d.version} — up to date`;
@@ -1164,10 +1169,10 @@ function handleUpdateStatus(d) {
       break;
 
     case 'error':
+      _updateBlocking = false; // unblock Step 1 — user can continue with current version
       banner.className = 'error';
       icon.textContent = '⚠';
       msg.textContent  = `Update check failed — continuing with v${d.version || '?'}`;
-      // Hide error after 6s so it doesn't nag the user
       setTimeout(() => { banner.className = ''; }, 6000);
       break;
   }

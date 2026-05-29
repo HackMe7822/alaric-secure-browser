@@ -231,12 +231,11 @@ function setupAutoUpdater() {
     sendToLauncher('update-status', { phase: 'error', message: err.message, version: app.getVersion() });
   });
 
-  // Delay first check so launcher window finishes loading
-  setTimeout(() => {
-    autoUpdater.checkForUpdates().catch(err => {
-      sendToLauncher('update-status', { phase: 'error', message: err.message, version: app.getVersion() });
-    });
-  }, 3000);
+  // Check immediately — send 'checking' first so launcher can block Step 1 right away
+  sendToLauncher('update-status', { phase: 'checking', version: app.getVersion() });
+  autoUpdater.checkForUpdates().catch(err => {
+    sendToLauncher('update-status', { phase: 'error', message: err.message, version: app.getVersion() });
+  });
 }
 
 // ─── Deep link helper ─────────────────────────────────────────────────────────

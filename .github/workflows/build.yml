@@ -59,6 +59,19 @@ jobs:
           mv "dist/Alaric Secure Browser Setup ${{ env.APP_VERSION }}.exe" \
              "dist/AlaricSecureBrowser-Windows-x64.exe"
 
+      - name: Fix latest.yml to reference renamed installer
+        # electron-updater downloads the file named in latest.yml — must match the release asset name
+        shell: bash
+        run: |
+          python3 -c "
+          import re
+          with open('dist/latest.yml') as f: c = f.read()
+          c = re.sub(r'url: .*\.exe', 'url: AlaricSecureBrowser-Windows-x64.exe', c)
+          c = re.sub(r'path: .*\.exe', 'path: AlaricSecureBrowser-Windows-x64.exe', c)
+          with open('dist/latest.yml', 'w') as f: f.write(c)
+          print(open('dist/latest.yml').read())
+          "
+
       - name: Upload Windows installer
         uses: actions/upload-artifact@v4
         with:
