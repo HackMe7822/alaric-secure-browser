@@ -601,7 +601,6 @@ ipcMain.handle('fix-multi-monitor', async () => {
 });
 
 ipcMain.handle('open-verify-window', (_, url) => {
-  // Open the verify/upload page inside Electron — never in an external browser
   const win = new BrowserWindow({
     width:  500,
     height: 800,
@@ -612,6 +611,12 @@ ipcMain.handle('open-verify-window', (_, url) => {
   });
   win.setMenu(null);
   win.loadURL(url);
+
+  // Prevent Chrome-style "Leave site?" dialog when user clicks X
+  // The page may have a beforeunload handler — bypass it so window closes cleanly
+  win.webContents.on('will-prevent-unload', (event) => {
+    event.preventDefault(); // allow close without dialog
+  });
 });
 
 ipcMain.handle('restore-display', async () => {
