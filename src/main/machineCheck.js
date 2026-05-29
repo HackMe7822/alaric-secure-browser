@@ -118,7 +118,11 @@ const BLACKLISTED = [
 //   'datto'  would match vendor agent names with 'datto' in path
 // These short entries use full exact match (checked separately in checkProcesses).
 const BLACKLISTED_EXACT = new Set([
-  'arc', 'wire', 'obs', 'signal', 'datto', 'goto',
+  // 'arc' REMOVED — Intel Arc GPU driver installs Arc.exe (Intel Arc Control monitoring tool).
+  // This is a legitimate GPU system process, not the Arc browser. Flagging it causes false
+  // positives on machines with Intel Arc GPUs and the process can't be killed without
+  // breaking GPU functionality.
+  'wire', 'obs', 'signal', 'datto', 'goto',
 ]);
 
 // ─── Friendly display names + stop instructions ───────────────────────────────
