@@ -355,19 +355,23 @@ async function _stopAndDisableService(rawName) {
 async function _killProcess(name) {
   try {
     if (process.platform === 'win32') {
-      // PowerShell Stop-Process: kills ALL instances by exact name, no quote issues
+      // STEP 1: Disable backing service FIRST — cuts the watchdog before we kill the process.
+      // If we kill the process first, the service sees it died and restarts it immediately.
+      const svcNames = PROCESS_TO_SERVICE[name.toLowerCase()] || [];
+      for (const svc of svcNames) {
+        await execAsync(`sc.exe config "${svc}" start= disabled 2>nul`, { timeout: 4000 }).catch(() => {});
+        await execAsync(`sc.exe stop "${svc}" 2>nul`, { timeout: 6000 }).catch(() => {});
+        await ps(`Set-Service -Name '${svc}' -StartupType Disabled -ErrorAction SilentlyContinue; Stop-Service -Name '${svc}' -Force -ErrorAction SilentlyContinue`).catch(() => {});
+      }
+
+      // STEP 2: Now kill the process — no watchdog can restart it
       await ps(`Stop-Process -Name '${name}' -Force -ErrorAction SilentlyContinue`).catch(() => {});
-      // Also try with .exe suffix (some apps register differently)
-      await ps(`Stop-Process -Name '${name.replace(/\.exe$/i,'')}' -Force -ErrorAction SilentlyContinue`).catch(() => {});
-      // taskkill with /t (terminate process TREE) and no quotes — belt and suspenders
       await execAsync(`taskkill /f /t /im ${name}.exe 2>nul`, { timeout: 5000 }).catch(() => {});
       await execAsync(`taskkill /f /t /im ${name}     2>nul`, { timeout: 5000 }).catch(() => {});
     } else {
+      // macOS: kill process (no service watchdog concern for most apps)
       await execAsync(`pkill -9 -f "${name}" 2>/dev/null || true`, { timeout: 5000 }).catch(() => {});
     }
-    // Also stop and disable any backing watchdog service
-    const svcNames = PROCESS_TO_SERVICE[name.toLowerCase()] || [];
-    for (const svc of svcNames) await _stopAndDisableService(svc);
   } catch {}
 }
 
