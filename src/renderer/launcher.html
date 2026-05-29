@@ -1022,6 +1022,17 @@ function handleWsMsg(msg) {
     setTimeout(launchExam, 1500);
   }
   if (msg.type === 'error') addChat('system', '⚠ ' + msg.message);
+  // Instant verification status push from server (no polling delay)
+  if (msg.type === 'verify_photos_submitted') {
+    updateVerifyStatus(msg.status);
+    if (msg.status === 'photos_submitted') {
+      addChat('system', '📸 Your ID and desk photos have been received. Waiting for proctor approval…');
+    } else if (msg.status === 'approved') {
+      addChat('system', '✅ Your identity has been verified by the proctor!');
+    } else if (msg.status === 'rejected') {
+      addChat('system', '❌ Verification rejected by proctor. Please check the chat for instructions.');
+    }
+  }
 }
 
 function wsSend(data) {
