@@ -57,9 +57,11 @@ const BLACKLISTED = [
   'greenshot',
   'screenpresso',
 
-  // ── Browsers — handled by checkBrowsers() via CloseMainWindow() ─────────────
-  // msedge removed: system process, use CloseMainWindow() not force-kill
-  // Chrome/Firefox/etc: also handled by checkBrowsers() for consistency
+  // ── Browsers — force-killed (except Edge which uses CloseMainWindow) ─────────
+  'chrome','googlechrome',          // Chrome: force kill
+  'firefox','firefoxdeveloperedi',  // Firefox: force kill
+  'opera','brave','vivaldi',        // Others: force kill
+  // msedge EXCLUDED — handled by checkBrowsers() via CloseMainWindow() only
 
   // ── RMM / endpoint management tools (can be used for remote access) ──────
   // NinjaRMM
@@ -280,10 +282,10 @@ async function checkBrowsers(autoFix = true) {
   try {
     if (process.platform !== 'win32') return { pass: true, msg: 'N/A', na: true };
 
-    // Check for browser windows with visible titles (not just background processes)
-    // Edge cannot be force-killed (system process) — close windows gracefully instead
+    // Only check Edge here — Chrome/Firefox/etc are already force-killed by checkProcesses().
+    // Edge is a Windows system process: use CloseMainWindow() to close the window gracefully.
     const windowScript = `
-$browsers = @('msedge','chrome','firefox','opera','brave','vivaldi','iexplore')
+$browsers = @('msedge','microsoftedge','iexplore')
 $open = @()
 foreach ($b in $browsers) {
   $procs = Get-Process -Name $b -ErrorAction SilentlyContinue |
@@ -298,10 +300,9 @@ $open -join ','
     if (!openBrowsers.length) return { pass: true, msg: 'No browser windows open' };
 
     if (autoFix) {
-      // Close browser WINDOWS gracefully (CloseMainWindow = same as clicking X)
-      // This works for Edge without needing to kill the system process
+      // Close Edge windows gracefully via CloseMainWindow (same as clicking X)
       const closeScript = `
-$browsers = @('msedge','chrome','firefox','opera','brave','vivaldi','iexplore')
+$browsers = @('msedge','microsoftedge','iexplore')
 foreach ($b in $browsers) {
   Get-Process -Name $b -ErrorAction SilentlyContinue |
     Where-Object { $_.MainWindowTitle -ne '' } |
