@@ -35,4 +35,9 @@ contextBridge.exposeInMainWorld('AlaricProctor', {
 
   // Close the exam kiosk window after submission
   closeExam: () => ipcRenderer.invoke('close-exam'),
+
+  // ── Auto-update APIs ────────────────────────────────────────────────────────
+  getAppVersion:    () => ipcRenderer.invoke('get-app-version'),
+  checkForUpdate:   () => ipcRenderer.invoke('check-for-update'),
+  onUpdateStatus:   (cb) => { ipcRenderer.on('update-status', (_, data) => cb(data)); },
 });

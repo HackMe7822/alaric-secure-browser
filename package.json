@@ -10,6 +10,7 @@
     "build": "electron-builder -wm"
   },
   "dependencies": {
+    "electron-updater": "^6.3.9",
     "node-machine-id": "^1.1.12",
     "uiohook-napi": "^1.5.3"
   },
@@ -34,13 +35,17 @@
       "assets/**",
       "node_modules/**"
     ],
+    "publish": {
+      "provider": "github",
+      "owner": "HackMe7822",
+      "repo": "alaric-secure-browser",
+      "releaseType": "release"
+    },
     "win": {
       "target": [
         {
           "target": "nsis",
-          "arch": [
-            "x64"
-          ]
+          "arch": ["x64"]
         }
       ],
       "requestedExecutionLevel": "requireAdministrator",
@@ -48,13 +53,8 @@
     },
     "mac": {
       "target": [
-        {
-          "target": "dmg",
-          "arch": [
-            "x64",
-            "arm64"
-          ]
-        }
+        { "target": "zip", "arch": ["x64", "arm64"] },
+        { "target": "dmg", "arch": ["x64", "arm64"] }
       ],
       "icon": "assets/icon.png",
       "hardenedRuntime": false,
@@ -63,17 +63,16 @@
       "entitlementsInherit": "assets/entitlements.mac.plist"
     },
     "nsis": {
-      "oneClick": false,
-      "allowToChangeInstallationDirectory": false,
+      "oneClick": true,
+      "perMachine": true,
+      "allowElevation": true,
       "createDesktopShortcut": true,
       "runAfterFinish": false
     },
     "protocols": [
       {
         "name": "Alaric Exam",
-        "schemes": [
-          "alaricexam"
-        ]
+        "schemes": ["alaricexam"]
       }
     ]
   }

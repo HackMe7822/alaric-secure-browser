@@ -4,6 +4,7 @@ const path = require('path');
 const { exec } = require('child_process');
 const { promisify } = require('util');
 const execAsync = promisify(exec);
+const { autoUpdater } = require('electron-updater');
 
 const machineCheck    = require('./src/main/machineCheck');
 const processMonitor  = require('./src/main/processMonitor');
@@ -22,6 +23,58 @@ if (process.platform === 'win32') {
 let launcherWin = null;
 let examWin     = null;
 let isExamLive  = false;
+
+// ─── Auto-updater ────────────────────────────────────────────────────────────
+autoUpdater.autoDownload         = true;   // download automatically when available
+autoUpdater.autoInstallOnAppQuit = false;  // we install immediately after download
+
+function sendToLauncher(channel, data) {
+  if (launcherWin && !launcherWin.isDestroyed()) {
+    launcherWin.webContents.send(channel, data);
+  }
+}
+
+function setupAutoUpdater() {
+  autoUpdater.on('checking-for-update', () => {
+    sendToLauncher('update-status', { phase: 'checking', version: app.getVersion() });
+  });
+
+  autoUpdater.on('update-available', info => {
+    sendToLauncher('update-status', { phase: 'available', version: info.version, current: app.getVersion() });
+  });
+
+  autoUpdater.on('update-not-available', () => {
+    sendToLauncher('update-status', { phase: 'current', version: app.getVersion() });
+  });
+
+  autoUpdater.on('download-progress', p => {
+    sendToLauncher('update-status', {
+      phase:       'downloading',
+      percent:     Math.round(p.percent),
+      transferred: p.transferred,
+      total:       p.total,
+      speed:       p.bytesPerSecond,
+      version:     app.getVersion(),
+    });
+  });
+
+  autoUpdater.on('update-downloaded', info => {
+    sendToLauncher('update-status', { phase: 'installing', version: info.version });
+    // Silent install: isSilent=true, forceRunAfter=true (app relaunches after install)
+    setTimeout(() => autoUpdater.quitAndInstall(true, true), 1500);
+  });
+
+  autoUpdater.on('error', err => {
+    sendToLauncher('update-status', { phase: 'error', message: err.message, version: app.getVersion() });
+  });
+
+  // Delay first check so launcher window finishes loading
+  setTimeout(() => {
+    autoUpdater.checkForUpdates().catch(err => {
+      sendToLauncher('update-status', { phase: 'error', message: err.message, version: app.getVersion() });
+    });
+  }, 3000);
+}
 
 // ─── Deep link helper ─────────────────────────────────────────────────────────
 function extractDeepLink(argv) {
@@ -66,6 +119,16 @@ function createLauncher() {
   const coldLink = extractDeepLink(process.argv);
   if (coldLink) {
     launcherWin.webContents.once('did-finish-load', () => sendDeepLink(coldLink));
+  }
+
+  // Start auto-updater only in production (packaged) builds
+  if (app.isPackaged) {
+    launcherWin.webContents.once('did-finish-load', () => setupAutoUpdater());
+  } else {
+    // Dev mode: send "current" so the version badge still shows
+    launcherWin.webContents.once('did-finish-load', () => {
+      sendToLauncher('update-status', { phase: 'dev', version: app.getVersion() });
+    });
   }
 
   // Prevent accidental close — ask confirmation
@@ -214,6 +277,12 @@ ipcMain.handle('get-machine-id', async () => {
 });
 
 ipcMain.handle('open-external', (_, url) => shell.openExternal(url));
+
+ipcMain.handle('get-app-version', () => app.getVersion());
+
+ipcMain.handle('check-for-update', () => {
+  if (app.isPackaged) autoUpdater.checkForUpdates().catch(() => {});
+});
 
 ipcMain.handle('close-exam', () => {
   if (examWin && !examWin.isDestroyed()) {

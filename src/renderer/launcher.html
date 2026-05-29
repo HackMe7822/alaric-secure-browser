@@ -188,6 +188,20 @@ nav{background:var(--nav-bg);color:var(--nav-text);display:flex;align-items:cent
 ::-webkit-scrollbar{width:4px}
 ::-webkit-scrollbar-track{background:transparent}
 ::-webkit-scrollbar-thumb{background:var(--border-2);border-radius:2px}
+
+/* ── Update banner ───────────────────────────────────────────────────────────── */
+#update-banner{display:none;align-items:center;gap:12px;padding:9px 20px;font-size:12px;font-weight:600;border-bottom:1px solid rgba(0,0,0,.08);flex-shrink:0}
+#update-banner.checking{display:flex;background:#f0f9ff;color:#0369a1}
+#update-banner.available{display:flex;background:#eff6ff;color:#1d4ed8}
+#update-banner.downloading{display:flex;background:#eff6ff;color:#1d4ed8}
+#update-banner.installing{display:flex;background:#f0fdf4;color:#15803d}
+#update-banner.error{display:flex;background:#fff7ed;color:#c2410c}
+#update-banner .upd-icon{font-size:14px;flex-shrink:0}
+#update-banner .upd-msg{flex:1;min-width:0}
+#update-progress-wrap{width:160px;flex-shrink:0}
+#update-progress-track{height:5px;background:rgba(0,0,0,.12);border-radius:3px;overflow:hidden;margin-bottom:3px}
+#update-progress-fill{height:100%;border-radius:3px;background:currentColor;width:0%;transition:width .4s ease}
+#update-pct{font-size:10px;text-align:center;opacity:.8}
 </style>
 </head>
 <body>
@@ -199,7 +213,7 @@ nav{background:var(--nav-bg);color:var(--nav-text);display:flex;align-items:cent
       <div class="brand-icon">A</div>
       <div>
         <span class="brand-name">Alaric Secure Browser</span>
-        <span class="brand-ver">v1.0</span>
+        <span class="brand-ver" id="app-ver">v1.0</span>
       </div>
     </div>
 
@@ -223,6 +237,16 @@ nav{background:var(--nav-bg);color:var(--nav-text);display:flex;align-items:cent
       </button>
     </div>
   </nav>
+
+  <!-- Update banner (shown during check / download / install) -->
+  <div id="update-banner">
+    <span class="upd-icon" id="upd-icon">🔍</span>
+    <span class="upd-msg"  id="upd-msg">Checking for updates…</span>
+    <div id="update-progress-wrap" style="display:none">
+      <div id="update-progress-track"><div id="update-progress-fill"></div></div>
+      <div id="update-pct">0%</div>
+    </div>
+  </div>
 
   <!-- Content -->
   <div id="content">
@@ -727,6 +751,101 @@ API?.onProtocolUrl?.((rawUrl) => {
     if (token)   { document.getElementById('exam-url').value = `https://alaric-exam.onrender.com/go/${token}`; }
   } catch {}
 });
+
+// ─── Auto-update UI ──────────────────────────────────────────────────────────
+let _updateBlocking = false; // true while downloading/installing — blocks step advance
+
+function handleUpdateStatus(d) {
+  const banner = document.getElementById('update-banner');
+  const icon   = document.getElementById('upd-icon');
+  const msg    = document.getElementById('upd-msg');
+  const progWrap = document.getElementById('update-progress-wrap');
+  const progFill = document.getElementById('update-progress-fill');
+  const progPct  = document.getElementById('update-pct');
+  const verEl    = document.getElementById('app-ver');
+
+  // Update version badge in nav
+  if (d.version) verEl.textContent = 'v' + d.version;
+
+  banner.className = '';
+  progWrap.style.display = 'none';
+  _updateBlocking = false;
+
+  switch (d.phase) {
+    case 'checking':
+      banner.className = 'checking';
+      icon.textContent = '🔍';
+      msg.textContent  = 'Checking for updates…';
+      break;
+
+    case 'current':
+    case 'dev':
+      // No update needed — hide after a moment
+      banner.className = 'checking';
+      icon.textContent = '✅';
+      msg.textContent  = `v${d.version} — up to date`;
+      setTimeout(() => { banner.className = ''; }, 3000);
+      break;
+
+    case 'available':
+      banner.className = 'available';
+      icon.textContent = '⬇';
+      msg.textContent  = `Update available: v${d.version} — downloading automatically…`;
+      _updateBlocking  = true;
+      break;
+
+    case 'downloading': {
+      banner.className = 'downloading';
+      icon.textContent = '⬇';
+      _updateBlocking  = true;
+      const pct = d.percent || 0;
+      const mb  = d.total ? ` (${(d.transferred/1048576).toFixed(1)} / ${(d.total/1048576).toFixed(1)} MB)` : '';
+      msg.textContent = `Downloading update v${d.version || ''}… ${pct}%${mb}`;
+      progWrap.style.display = '';
+      progFill.style.width   = pct + '%';
+      progPct.textContent    = pct + '%';
+      break;
+    }
+
+    case 'installing':
+      banner.className = 'installing';
+      icon.textContent = '🔄';
+      msg.textContent  = `Installing update v${d.version || ''} — app will restart automatically…`;
+      _updateBlocking  = true;
+      break;
+
+    case 'error':
+      banner.className = 'error';
+      icon.textContent = '⚠';
+      msg.textContent  = `Update check failed — continuing with v${d.version || '?'}`;
+      // Hide error after 6s so it doesn't nag the user
+      setTimeout(() => { banner.className = ''; }, 6000);
+      break;
+  }
+}
+
+// Wire up update events from main process
+if (API?.onUpdateStatus) {
+  API.onUpdateStatus(handleUpdateStatus);
+}
+
+// Show current version immediately from IPC
+if (API?.getAppVersion) {
+  API.getAppVersion().then(v => {
+    if (v) document.getElementById('app-ver').textContent = 'v' + v;
+  }).catch(() => {});
+}
+
+// Block btn-continue-1 while update is downloading/installing
+const _origContinue1 = document.getElementById('btn-continue-1').onclick;
+document.getElementById('btn-continue-1').onclick = function(e) {
+  if (_updateBlocking) {
+    const msg = document.getElementById('upd-msg').textContent;
+    showUrlError('Please wait — ' + msg);
+    return;
+  }
+  if (_origContinue1) _origContinue1.call(this, e);
+};
 
 // ─── Boot ─────────────────────────────────────────────────────────────────────
 goStep(1);

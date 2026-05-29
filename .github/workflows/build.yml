@@ -3,19 +3,31 @@ name: Build Alaric Secure Browser
 on:
   push:
     branches: [main]
-  workflow_dispatch:   # allows manual trigger from GitHub UI
+  workflow_dispatch:
 
 jobs:
+  # ─── Set version once, shared by all jobs via output ───────────────────────
+  version:
+    name: Set version
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.ver.outputs.version }}
+    steps:
+      - id: ver
+        run: echo "version=1.0.${{ github.run_number }}" >> $GITHUB_OUTPUT
+
+  # ─── Windows build ──────────────────────────────────────────────────────────
   build-windows:
     name: Windows Installer (x64)
+    needs: version
     runs-on: windows-latest
+    env:
+      APP_VERSION: ${{ needs.version.outputs.version }}
 
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Set up Node.js
-        uses: actions/setup-node@v4
+      - uses: actions/setup-node@v4
         with:
           node-version: '20'
           cache: 'npm'
@@ -23,36 +35,56 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Stamp version into package.json
+        shell: bash
+        run: |
+          node -e "
+            const fs = require('fs');
+            const p  = JSON.parse(fs.readFileSync('package.json','utf8'));
+            p.version = '${{ env.APP_VERSION }}';
+            fs.writeFileSync('package.json', JSON.stringify(p, null, 2) + '\n');
+          "
+
       - name: Generate app icon
         run: node scripts/gen-icon.js
 
-      - name: Build Windows installer
+      - name: Build Windows installer + update metadata
         run: npx electron-builder --win --x64 --publish never
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: false
 
-      - name: Rename for clean download URL
+      - name: Rename installer for clean download URL
         shell: bash
         run: |
-          mv "dist/Alaric Secure Browser Setup 1.0.0.exe" "dist/AlaricSecureBrowser-Windows-x64.exe"
+          mv "dist/Alaric Secure Browser Setup ${{ env.APP_VERSION }}.exe" \
+             "dist/AlaricSecureBrowser-Windows-x64.exe"
 
-      - name: Upload installer artifact
+      - name: Upload Windows installer
         uses: actions/upload-artifact@v4
         with:
-          name: Alaric-Secure-Browser-Windows-x64
+          name: win-installer
           path: dist/AlaricSecureBrowser-Windows-x64.exe
           retention-days: 30
 
+      - name: Upload Windows update metadata (latest.yml)
+        uses: actions/upload-artifact@v4
+        with:
+          name: win-update-meta
+          path: dist/latest.yml
+          retention-days: 30
+
+  # ─── macOS build ────────────────────────────────────────────────────────────
   build-mac:
-    name: macOS DMG (x64 + arm64)
+    name: macOS DMG + ZIP (x64 + arm64)
+    needs: version
     runs-on: macos-latest
+    env:
+      APP_VERSION: ${{ needs.version.outputs.version }}
 
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Set up Node.js
-        uses: actions/setup-node@v4
+      - uses: actions/setup-node@v4
         with:
           node-version: '20'
           cache: 'npm'
@@ -60,61 +92,97 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Stamp version into package.json
+        run: |
+          node -e "
+            const fs = require('fs');
+            const p  = JSON.parse(fs.readFileSync('package.json','utf8'));
+            p.version = '${{ env.APP_VERSION }}';
+            fs.writeFileSync('package.json', JSON.stringify(p, null, 2) + '\n');
+          "
+
       - name: Generate app icon
         run: node scripts/gen-icon.js
 
-      - name: Build macOS x64 DMG
+      - name: Build macOS x64 (DMG + ZIP)
         run: npx electron-builder --mac --x64 --publish never
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: false
 
-      - name: Build macOS arm64 DMG
+      - name: Build macOS arm64 (DMG + ZIP)
         run: npx electron-builder --mac --arm64 --publish never
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: false
 
-      - name: Rename for clean download URLs
+      - name: Rename DMGs for clean download URLs
         run: |
-          mv "dist/Alaric Secure Browser-1.0.0.dmg"      "dist/AlaricSecureBrowser-macOS-x64.dmg"
-          mv "dist/Alaric Secure Browser-1.0.0-arm64.dmg" "dist/AlaricSecureBrowser-macOS-arm64.dmg"
+          mv "dist/Alaric Secure Browser-${{ env.APP_VERSION }}.dmg"       dist/AlaricSecureBrowser-macOS-x64.dmg   2>/dev/null || true
+          mv "dist/Alaric Secure Browser-${{ env.APP_VERSION }}-arm64.dmg" dist/AlaricSecureBrowser-macOS-arm64.dmg 2>/dev/null || true
 
-      - name: Upload DMG artifacts
+      - name: Upload macOS DMGs
         uses: actions/upload-artifact@v4
         with:
-          name: Alaric-Secure-Browser-macOS
+          name: mac-dmg
           path: dist/AlaricSecureBrowser-macOS-*.dmg
           retention-days: 30
 
+      - name: Upload macOS update metadata (latest-mac.yml) and ZIP files
+        uses: actions/upload-artifact@v4
+        with:
+          name: mac-update-meta
+          path: |
+            dist/latest-mac.yml
+            dist/*.zip
+            dist/*.zip.blockmap
+          retention-days: 30
+
+  # ─── Publish GitHub Release ─────────────────────────────────────────────────
   release:
     name: Publish GitHub Release
-    needs: [build-windows, build-mac]
+    needs: [version, build-windows, build-mac]
     runs-on: ubuntu-latest
     permissions:
       contents: write
 
     steps:
-      - name: Download Windows artifact
+      - name: Download Windows installer
         uses: actions/download-artifact@v4
         with:
-          name: Alaric-Secure-Browser-Windows-x64
+          name: win-installer
           path: release-assets/
 
-      - name: Download macOS artifacts
+      - name: Download Windows update metadata
         uses: actions/download-artifact@v4
         with:
-          name: Alaric-Secure-Browser-macOS
+          name: win-update-meta
           path: release-assets/
 
-      - name: List assets
+      - name: Download macOS DMGs
+        uses: actions/download-artifact@v4
+        with:
+          name: mac-dmg
+          path: release-assets/
+
+      - name: Download macOS update metadata + ZIPs
+        uses: actions/download-artifact@v4
+        with:
+          name: mac-update-meta
+          path: release-assets/
+
+      - name: List release assets
         run: ls -lh release-assets/
 
-      - name: Publish release (tag = latest)
+      - name: Publish versioned release (auto-update target)
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: latest
-          name: "Alaric Secure Browser — Latest Build"
+          tag_name: v${{ needs.version.outputs.version }}
+          name: "Alaric Secure Browser v${{ needs.version.outputs.version }}"
           body: |
-            ## Download
+            ## Alaric Secure Browser v${{ needs.version.outputs.version }}
+
+            Built from commit ${{ github.sha }} — auto-deployed by CI.
+
+            ### Download
 
             | Platform | File |
             |---|---|
@@ -122,8 +190,10 @@ jobs:
             | **macOS — Apple Silicon (M1/M2/M3)** | `AlaricSecureBrowser-macOS-arm64.dmg` |
             | **macOS — Intel** | `AlaricSecureBrowser-macOS-x64.dmg` |
 
+            > **Auto-update**: Installed copies of the app update silently on next launch via `latest.yml` / `latest-mac.yml`.
+
             ### Installation notes
-            - **Windows**: Run the `.exe` as Administrator
+            - **Windows**: Run the `.exe` as Administrator (one-click silent install)
             - **macOS**: Drag to Applications. If Gatekeeper blocks it → System Settings → Privacy & Security → Open Anyway
           files: release-assets/*
           make_latest: true
