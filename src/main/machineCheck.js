@@ -9,12 +9,12 @@ const execAsync = promisify(exec);
 
 // ─── Blacklisted processes ───────────────────────────────────────────────────
 const BLACKLISTED = [
-  // Remote desktop / control
+  // ── Remote desktop / control ─────────────────────────────────────────────
   'teamviewer','tv_w32','tv_x64','teamviewer_service',
   'anydesk',
   'ammyyadmin','aa_v3',
   'logmein','logmeinremoteaccess',
-  'remoting_host',                   // Chrome Remote Desktop
+  'remoting_host',                          // Chrome Remote Desktop
   'vncviewer','vncserver','winvnc','tvnserver','ultravnc',
   'ultraviewer',
   'supremo',
@@ -26,21 +26,54 @@ const BLACKLISTED = [
   'dwagent','dwservice',
   'radmin',
   'getscreen',
-  'zoho assist',
-  // Screen capture / broadcast
+
+  // ── Video conferencing / screen sharing (screen-share loophole) ───────────
+  'teams','ms-teams','msteams',             // Microsoft Teams
+  'zoom','zoomautoupdater',                 // Zoom
+  'skype','skypeapp',                       // Skype
+  'discord',                                // Discord
+  'slack',                                  // Slack
+  'webex','webexmta','ciscowebexstart',     // Cisco WebEx
+  'gotomeeting','g2mcomm','g2mlauncher',   // GoToMeeting
+  'lync',                                   // MS Lync (old Teams)
+  'whatsapp',                               // WhatsApp Desktop
+  'telegram',                               // Telegram Desktop
+  'signal',                                 // Signal Desktop
+  'facetime',                               // macOS FaceTime
+  'googlemeet',                             // Google Meet desktop
+  'whereby',                                // Whereby
+  'wire',                                   // Wire messenger
+
+  // ── Screen capture tools ─────────────────────────────────────────────────
   'obs64','obs32','obs',
-  'xsplit',
-  'streamlabs obs',
+  'xsplit','xsplitbroadcaster',
+  'streamlabs',
   'bandicam',
   'camtasia',
   'fraps',
-  'nvidia shadowplay','nvcontainer',
-  // Virtual machines
+  'sharex',
+  'snagit32','snagit64','snagiteditor',
+  'lightshot',
+  'greenshot',
+  'screenpresso',
+
+  // ── Browsers (exam runs in Electron kiosk — no browser should be open) ───
+  'chrome','googlechrome',
+  'firefox','firefoxdeveloperedi',
+  'msedge','microsoftedgecp',
+  'opera',
+  'brave',
+  'iexplore',
+  'safari',
+  'vivaldi',
+  'arc',
+
+  // ── Virtual machines ─────────────────────────────────────────────────────
   'vmware','vmwaretray','vmwareuser','vmware-vmx',
   'virtualbox','vboxservice','vboxtray',
   'parallels','prl_client_app',
   'qemu-system',
-  'vmwp','vmms',                     // Hyper-V workers
+  'vmwp','vmms',
 ];
 
 // ─── Friendly display names + stop instructions ───────────────────────────────
