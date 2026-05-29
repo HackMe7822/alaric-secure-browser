@@ -1,0 +1,154 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Alaric — Machine Locked</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { height: 100%; background: #0f172a; color: #e2e8f0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif; font-size: 14px; line-height: 1.6; overflow: hidden; user-select: none; -webkit-app-region: drag; }
+  #app { display: flex; flex-direction: column; height: 100%; }
+
+  /* Title bar drag region */
+  .drag-bar { height: 32px; background: #0f172a; flex-shrink: 0; display: flex; align-items: center; padding: 0 16px; }
+  .drag-bar span { font-size: 11px; color: #475569; }
+
+  /* Main content */
+  .body { flex: 1; display: flex; align-items: center; justify-content: center; padding: 24px; -webkit-app-region: no-drag; }
+  .card { background: #1e293b; border: 1px solid #334155; border-radius: 16px; padding: 40px 44px; max-width: 600px; width: 100%; text-align: center; box-shadow: 0 20px 60px rgba(0,0,0,.5); }
+
+  .lock-icon { font-size: 3.2rem; margin-bottom: 16px; display: block; }
+
+  h1 { font-size: 1.6rem; font-weight: 800; color: #f1f5f9; margin-bottom: 6px; letter-spacing: -.02em; }
+  .subtitle { font-size: 13px; color: #94a3b8; margin-bottom: 28px; line-height: 1.5; }
+
+  .exam-details { background: #0f172a; border: 1px solid #334155; border-radius: 10px; padding: 16px 20px; margin-bottom: 28px; text-align: left; display: flex; flex-direction: column; gap: 8px; }
+  .det-row { display: flex; gap: 12px; align-items: baseline; font-size: 13px; }
+  .det-lbl { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .07em; color: #64748b; width: 110px; flex-shrink: 0; }
+  .det-val { color: #cbd5e1; font-weight: 500; }
+
+  .timer-block { background: #1e293b; border: 1px solid #334155; border-radius: 8px; padding: 10px 16px; margin-bottom: 28px; font-size: 12px; color: #64748b; }
+  .timer-block strong { color: #94a3b8; }
+
+  .release-btn {
+    width: 100%;
+    padding: 14px;
+    background: linear-gradient(135deg, #dc2626, #b91c1c);
+    color: #fff;
+    border: none;
+    border-radius: 10px;
+    font-size: 1rem;
+    font-weight: 700;
+    cursor: pointer;
+    letter-spacing: .01em;
+    transition: opacity .15s, transform .1s;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    box-shadow: 0 4px 20px rgba(220,38,38,.35);
+  }
+  .release-btn:hover { opacity: .9; }
+  .release-btn:active { transform: scale(.98); }
+  .release-btn:disabled { opacity: .5; cursor: not-allowed; transform: none; }
+
+  .warning { margin-top: 16px; font-size: 11px; color: #475569; line-height: 1.5; }
+
+  .spinner { width: 16px; height: 16px; border: 2px solid rgba(255,255,255,.3); border-top-color: #fff; border-radius: 50%; animation: spin .8s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  .status-msg { margin-top: 14px; font-size: 12px; color: #64748b; min-height: 18px; }
+</style>
+</head>
+<body>
+<div id="app">
+  <div class="drag-bar"><span>Alaric Secure Browser — Machine Locked</span></div>
+  <div class="body">
+    <div class="card">
+      <span class="lock-icon">🔒</span>
+      <h1>This Machine is Locked</h1>
+      <p class="subtitle">An exam session was completed on this machine.<br>Click <strong>Release Machine</strong> to remove the exam software and restore all settings.</p>
+
+      <div class="exam-details" id="exam-details" style="display:none">
+        <div class="det-row"><span class="det-lbl">Candidate</span><span class="det-val" id="d-candidate">—</span></div>
+        <div class="det-row"><span class="det-lbl">Exam</span><span class="det-val" id="d-exam">—</span></div>
+        <div class="det-row"><span class="det-lbl">Submitted</span><span class="det-val" id="d-time">—</span></div>
+      </div>
+
+      <div class="timer-block">Machine locked for: <strong id="lock-timer">calculating…</strong></div>
+
+      <button class="release-btn" id="release-btn" onclick="doRelease()">
+        🗑 Release Machine &amp; Uninstall
+      </button>
+
+      <p class="status-msg" id="status-msg"></p>
+
+      <p class="warning">
+        ⚠ This will uninstall Alaric Secure Browser, restore all services and settings, and delete exam data from this machine.<br>
+        This action cannot be undone.
+      </p>
+    </div>
+  </div>
+</div>
+
+<script>
+const API = window.AlaricProctor;
+let _lockData = null;
+
+API?.onLockData?.((data) => {
+  _lockData = data;
+
+  if (data.candidateName || data.examTitle) {
+    document.getElementById('exam-details').style.display = '';
+    document.getElementById('d-candidate').textContent = data.candidateName || '—';
+    document.getElementById('d-exam').textContent       = data.examTitle    || '—';
+    document.getElementById('d-time').textContent = data.lockedAt
+      ? new Date(data.lockedAt).toLocaleString()
+      : '—';
+  }
+
+  // Start timer
+  if (data.lockedAt) {
+    const lockedAt = new Date(data.lockedAt).getTime();
+    const tick = () => {
+      const secs = Math.floor((Date.now() - lockedAt) / 1000);
+      const h = Math.floor(secs / 3600);
+      const m = Math.floor((secs % 3600) / 60);
+      const s = secs % 60;
+      document.getElementById('lock-timer').textContent =
+        h > 0 ? `${h}h ${m}m ${s}s` : m > 0 ? `${m}m ${s}s` : `${s}s`;
+    };
+    tick();
+    setInterval(tick, 1000);
+  }
+});
+
+async function doRelease() {
+  const btn = document.getElementById('release-btn');
+  const msg = document.getElementById('status-msg');
+
+  const ok = confirm(
+    'Release this machine?\n\n' +
+    'This will:\n' +
+    '• Remove the exam lock and auto-start\n' +
+    '• Restore all services and settings\n' +
+    '• Uninstall Alaric Secure Browser\n' +
+    '• Delete all exam data from this machine\n\n' +
+    'This cannot be undone.'
+  );
+  if (!ok) return;
+
+  btn.disabled = true;
+  btn.innerHTML = '<div class="spinner"></div> Releasing — please wait…';
+  msg.textContent = 'Stopping services, restoring settings…';
+
+  try {
+    await API?.releaseMachine?.();
+  } catch(e) {
+    msg.textContent = 'Error: ' + e.message;
+    btn.disabled = false;
+    btn.innerHTML = '🗑 Release Machine & Uninstall';
+  }
+}
+</script>
+</body>
+</html>

@@ -283,6 +283,12 @@ nav{background:var(--nav-bg);color:var(--nav-text);display:flex;align-items:cent
         <div class="card-sub">Verifying your system meets all security requirements. This takes about 15 seconds.</div>
       </div>
       <div class="card-body">
+        <!-- macOS permission warnings (shown only if permissions missing) -->
+        <div id="mac-perm-banner" style="display:none;background:var(--warn-bg);border:1px solid var(--warn-border);border-radius:var(--radius-sm);padding:12px 14px;margin-bottom:14px">
+          <div style="font-size:13px;font-weight:700;color:var(--warn-text);margin-bottom:8px">⚠ macOS Permissions Required</div>
+          <div id="mac-perm-list" style="display:flex;flex-direction:column;gap:6px;font-size:12px"></div>
+        </div>
+
         <div id="checks-summary" class="checks-summary running">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" style="animation:spin .9s linear infinite;flex-shrink:0"><path d="M21 12a9 9 0 11-6.219-8.56"/></svg>
           Running checks…
@@ -487,6 +493,7 @@ document.getElementById('btn-continue-1').onclick = () => {
   btn1.textContent = 'Continue →';
 
   goStep(2);
+  checkMacPermissions(); // show permission prompts on macOS before checks run
   runChecks();
 };
 
@@ -501,6 +508,48 @@ function showUrlError(msg) {
 }
 function hideUrlError() {
   document.getElementById('url-error').classList.remove('show');
+}
+
+// ─── macOS permission check banner ────────────────────────────────────────────
+async function checkMacPermissions() {
+  if (!API?.checkMacPermissions) return;
+  const p = await API.checkMacPermissions().catch(() => ({ allGranted: true }));
+  if (p.allGranted || p.platform === 'win32') return;
+
+  const banner = document.getElementById('mac-perm-banner');
+  const list   = document.getElementById('mac-perm-list');
+  if (!banner || !list) return;
+
+  const missing = [];
+  if (!p.accessibility)              missing.push({ key: 'accessibility',   label: 'Accessibility',    detail: 'Required for keyboard lock during exam' });
+  if (p.screenRecording !== 'granted') missing.push({ key: 'screenRecording', label: 'Screen Recording',  detail: 'Required for screen capture proctoring' });
+  if (p.microphone !== 'granted')    missing.push({ key: 'microphone',      label: 'Microphone',        detail: 'Required for audio monitoring' });
+  if (p.camera !== 'granted')        missing.push({ key: 'camera',          label: 'Camera',            detail: 'Required for webcam proctoring' });
+
+  if (!missing.length) return;
+
+  list.innerHTML = missing.map(m => `
+    <div style="display:flex;align-items:center;justify-content:space-between;gap:10px">
+      <div>
+        <strong style="color:var(--dark)">${m.label}</strong>
+        <span style="color:var(--gray);margin-left:6px">${m.detail}</span>
+      </div>
+      <button onclick="grantPerm('${m.key}')" style="flex-shrink:0;background:var(--mid);color:#fff;border:none;border-radius:5px;padding:4px 10px;font-size:11px;font-weight:700;cursor:pointer">
+        Grant →
+      </button>
+    </div>
+  `).join('');
+  banner.style.display = '';
+}
+
+async function grantPerm(key) {
+  if (key === 'microphone' || key === 'camera') {
+    await API?.requestMediaAccess?.(key);
+  } else {
+    await API?.openPrivacySettings?.(key);
+  }
+  // Re-check after a delay (user might have granted in System Settings)
+  setTimeout(checkMacPermissions, 2000);
 }
 
 // ─── Step 2: Machine checks ───────────────────────────────────────────────────

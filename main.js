@@ -1,6 +1,8 @@
 'use strict';
-const { app, BrowserWindow, ipcMain, screen, shell, dialog } = require('electron');
+const { app, BrowserWindow, ipcMain, screen, shell, dialog, systemPreferences } = require('electron');
 const path = require('path');
+const os   = require('os');
+const fs   = require('fs');
 const { exec } = require('child_process');
 const { promisify } = require('util');
 const execAsync = promisify(exec);
@@ -22,7 +24,141 @@ if (process.platform === 'win32') {
 
 let launcherWin = null;
 let examWin     = null;
+let lockedWin   = null;
 let isExamLive  = false;
+
+// ─── Lock file ────────────────────────────────────────────────────────────────
+const LOCK_FILE = path.join(app.getPath('userData'), 'exam-lock.json');
+
+function readLockData() {
+  try { return JSON.parse(fs.readFileSync(LOCK_FILE, 'utf8')); } catch { return null; }
+}
+function writeLockData(data) {
+  fs.mkdirSync(path.dirname(LOCK_FILE), { recursive: true });
+  fs.writeFileSync(LOCK_FILE, JSON.stringify({ ...data, lockedAt: new Date().toISOString() }));
+}
+function clearLockData() { try { fs.unlinkSync(LOCK_FILE); } catch {} }
+
+// ─── Auto-start (survive reboot) ─────────────────────────────────────────────
+async function addAutoStart() {
+  const exe = process.execPath;
+  if (process.platform === 'win32') {
+    await execAsync(
+      `reg add "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run" /v AlaricSecureBrowser /t REG_SZ /d "\\"${exe}\\"" /f`,
+      { timeout: 6000 }
+    ).catch(() => {});
+  } else if (process.platform === 'darwin') {
+    const plistDir  = path.join(os.homedir(), 'Library', 'LaunchAgents');
+    const plistPath = path.join(plistDir, 'com.alaric.securebrowser.locked.plist');
+    fs.mkdirSync(plistDir, { recursive: true });
+    fs.writeFileSync(plistPath,
+      `<?xml version="1.0" encoding="UTF-8"?>\n` +
+      `<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">\n` +
+      `<plist version="1.0"><dict>\n` +
+      `  <key>Label</key><string>com.alaric.securebrowser.locked</string>\n` +
+      `  <key>ProgramArguments</key><array><string>${exe}</string></array>\n` +
+      `  <key>RunAtLoad</key><true/>\n` +
+      `  <key>KeepAlive</key><false/>\n` +
+      `</dict></plist>`
+    );
+    await execAsync(`launchctl load "${plistPath}"`, { timeout: 5000 }).catch(() => {});
+  }
+}
+
+async function clearAutoStart() {
+  if (process.platform === 'win32') {
+    await execAsync(
+      `reg delete "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run" /v AlaricSecureBrowser /f`,
+      { timeout: 5000 }
+    ).catch(() => {});
+  } else if (process.platform === 'darwin') {
+    const plistPath = path.join(os.homedir(), 'Library', 'LaunchAgents', 'com.alaric.securebrowser.locked.plist');
+    await execAsync(`launchctl unload "${plistPath}" 2>/dev/null || true`, { timeout: 5000 }).catch(() => {});
+    try { fs.unlinkSync(plistPath); } catch {}
+  }
+}
+
+// ─── Release machine — cleanup everything ────────────────────────────────────
+async function runRelease() {
+  await clearAutoStart();
+  clearLockData();
+  await machineCheck.restoreServices().catch(() => {});
+
+  // Delete local Electron user data (cache, logs, etc.)
+  const userData = app.getPath('userData');
+  for (const sub of ['Cache', 'GPUCache', 'Logs', 'blob_storage', 'Code Cache']) {
+    const p = path.join(userData, sub);
+    await execAsync(
+      process.platform === 'win32'
+        ? `if exist "${p}" rd /s /q "${p}" 2>nul`
+        : `rm -rf "${p}" 2>/dev/null || true`,
+      { timeout: 8000 }
+    ).catch(() => {});
+  }
+
+  // Platform uninstaller
+  if (process.platform === 'win32') {
+    const uninstaller = path.join(path.dirname(process.execPath), 'Uninstall AlaricSecureBrowser.exe');
+    if (fs.existsSync(uninstaller)) {
+      exec(`"${uninstaller}" /S`); // fire and forget
+    } else {
+      // Fallback: delete exe folder
+      exec(`ping 127.0.0.1 -n 3 > nul && rd /s /q "${path.dirname(process.execPath)}"`);
+    }
+  } else if (process.platform === 'darwin') {
+    const appBundle = path.resolve(process.execPath, '..', '..', '..');
+    exec(`sleep 2 && rm -rf "${appBundle}" && rm -rf "${userData}"`);
+  }
+
+  app._quitting = true;
+  app.quit();
+}
+
+// ─── macOS permission prompts ─────────────────────────────────────────────────
+async function setupMacPermissions() {
+  if (process.platform !== 'darwin') return;
+
+  // Accessibility (keyboard lock, window management)
+  const trusted = systemPreferences.isTrustedAccessibilityClient(false);
+  if (!trusted) {
+    const { response } = await dialog.showMessageBox({
+      type:      'warning',
+      title:     'Accessibility Permission Required',
+      message:   'Alaric Secure Browser needs Accessibility access',
+      detail:    'This is required to enforce keyboard security and window focus during exams.\n\n' +
+                 'Click "Open Settings" → find "Alaric Secure Browser" → enable the toggle.',
+      buttons:   ['Open Settings', 'Later'],
+      defaultId: 0,
+    });
+    if (response === 0) {
+      systemPreferences.isTrustedAccessibilityClient(true); // triggers macOS prompt
+      shell.openExternal('x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility');
+    }
+  }
+
+  // Screen Recording
+  const screenStatus = systemPreferences.getMediaAccessStatus('screen');
+  if (screenStatus !== 'granted') {
+    const { response } = await dialog.showMessageBox({
+      type:      'info',
+      title:     'Screen Recording Permission',
+      message:   'Alaric Secure Browser needs Screen Recording access',
+      detail:    'Required for proctoring screen capture during exams.\n\n' +
+                 'Click "Open Settings" → find "Alaric Secure Browser" → enable the toggle, then restart the app.',
+      buttons:   ['Open Settings', 'Later'],
+      defaultId: 0,
+    });
+    if (response === 0) {
+      shell.openExternal('x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture');
+    }
+  }
+
+  // Microphone + Camera (these trigger native macOS prompt automatically)
+  if (systemPreferences.getMediaAccessStatus('microphone') !== 'granted')
+    await systemPreferences.askForMediaAccess('microphone').catch(() => {});
+  if (systemPreferences.getMediaAccessStatus('camera') !== 'granted')
+    await systemPreferences.askForMediaAccess('camera').catch(() => {});
+}
 
 // ─── Auto-updater ────────────────────────────────────────────────────────────
 autoUpdater.autoDownload         = true;   // download automatically when available
@@ -139,6 +275,37 @@ function stopDisplayWatcher() {
     screen.off('display-added', _displayAddedHandler);
     _displayAddedHandler = null;
   }
+}
+
+// ─── Locked window (shown after exam until Release Machine is clicked) ────────
+function createLockedWindow(lockData) {
+  if (lockedWin && !lockedWin.isDestroyed()) { lockedWin.focus(); return; }
+  lockedWin = new BrowserWindow({
+    width:      900,
+    height:     580,
+    frame:      false,
+    resizable:  false,
+    maximizable:false,
+    alwaysOnTop:true,
+    skipTaskbar:false,
+    backgroundColor: '#0f172a',
+    webPreferences: {
+      preload:          path.join(__dirname, 'preload.js'),
+      contextIsolation: true,
+      nodeIntegration:  false,
+    },
+    title: 'Alaric — Machine Locked',
+  });
+  lockedWin.setMenu(null);
+  lockedWin.setAlwaysOnTop(true, 'screen-saver', 1);
+  lockedWin.loadFile('src/renderer/locked.html');
+  lockedWin.webContents.once('did-finish-load', () => {
+    lockedWin.webContents.send('lock-data', lockData || {});
+  });
+  // Prevent closing — only Release Machine can exit
+  lockedWin.on('close', e => {
+    if (!app._quitting) e.preventDefault();
+  });
 }
 
 // ─── Window creators ──────────────────────────────────────────────────────────
@@ -272,7 +439,13 @@ function createExamWindow(examUrl) {
     machineCheck.stopWatchdog();
     stopDisplayWatcher();
     machineCheck.restoreServices().catch(() => {});
-    networkMonitor.restore().finally(() => app.quit());
+    const lockData = readLockData();
+    if (lockData) {
+      // Machine is locked — show locked window instead of quitting
+      networkMonitor.restore().finally(() => createLockedWindow(lockData));
+    } else {
+      networkMonitor.restore().finally(() => app.quit());
+    }
   });
 }
 
@@ -336,6 +509,50 @@ ipcMain.handle('open-external', (_, url) => shell.openExternal(url));
 
 ipcMain.handle('get-app-version', () => app.getVersion());
 
+// ── Machine lock / release ────────────────────────────────────────────────────
+ipcMain.handle('lock-machine', async (_, data) => {
+  writeLockData(data || {});
+  await addAutoStart();
+  return { ok: true };
+});
+
+ipcMain.handle('release-machine', async () => {
+  await runRelease(); // also calls app.quit()
+  return { ok: true };
+});
+
+// ── macOS permission status ───────────────────────────────────────────────────
+ipcMain.handle('check-mac-permissions', () => {
+  if (process.platform !== 'darwin') return { platform: 'win32', allGranted: true };
+  const acc   = systemPreferences.isTrustedAccessibilityClient(false);
+  const scr   = systemPreferences.getMediaAccessStatus('screen');
+  const mic   = systemPreferences.getMediaAccessStatus('microphone');
+  const cam   = systemPreferences.getMediaAccessStatus('camera');
+  return {
+    platform:       'darwin',
+    accessibility:  acc,
+    screenRecording:scr,
+    microphone:     mic,
+    camera:         cam,
+    allGranted:     acc && scr === 'granted' && mic === 'granted' && cam === 'granted',
+  };
+});
+
+ipcMain.handle('open-privacy-settings', (_, section) => {
+  const urls = {
+    accessibility:   'x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility',
+    screenRecording: 'x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture',
+    microphone:      'x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone',
+    camera:          'x-apple.systempreferences:com.apple.preference.security?Privacy_Camera',
+  };
+  shell.openExternal(urls[section] || urls.accessibility);
+});
+
+ipcMain.handle('request-media-access', async (_, type) => {
+  if (process.platform !== 'darwin') return 'granted';
+  return systemPreferences.askForMediaAccess(type).then(g => g ? 'granted' : 'denied').catch(() => 'denied');
+});
+
 ipcMain.handle('fix-multi-monitor', async () => {
   const ok = await switchToInternalDisplay();
   return { ok, displayCount: screen.getAllDisplays().length };
@@ -375,12 +592,22 @@ ipcMain.handle('start-exam', async (_, { examUrl, examServerHost }) => {
 });
 
 // ─── App lifecycle ────────────────────────────────────────────────────────────
-app.whenReady().then(() => {
-  createLauncher();
+app.whenReady().then(async () => {
+  // macOS: request required permissions before anything else
+  await setupMacPermissions();
 
-  // macOS: re-open on dock click
+  const lockData = readLockData();
+  if (lockData) {
+    createLockedWindow(lockData);
+  } else {
+    createLauncher();
+  }
+
   app.on('activate', () => {
-    if (BrowserWindow.getAllWindows().length === 0) createLauncher();
+    if (BrowserWindow.getAllWindows().length === 0) {
+      const ld = readLockData();
+      if (ld) createLockedWindow(ld); else createLauncher();
+    }
   });
 });
 

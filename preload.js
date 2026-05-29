@@ -43,4 +43,14 @@ contextBridge.exposeInMainWorld('AlaricProctor', {
   getAppVersion:    () => ipcRenderer.invoke('get-app-version'),
   checkForUpdate:   () => ipcRenderer.invoke('check-for-update'),
   onUpdateStatus:   (cb) => { ipcRenderer.on('update-status', (_, data) => cb(data)); },
+
+  // ── Machine lock / release ──────────────────────────────────────────────────
+  lockMachine:     (data) => ipcRenderer.invoke('lock-machine', data),
+  releaseMachine:  ()     => ipcRenderer.invoke('release-machine'),
+  onLockData:      (cb)   => { ipcRenderer.on('lock-data', (_, data) => cb(data)); },
+
+  // ── macOS permissions ───────────────────────────────────────────────────────
+  checkMacPermissions:  ()      => ipcRenderer.invoke('check-mac-permissions'),
+  openPrivacySettings:  (sec)   => ipcRenderer.invoke('open-privacy-settings', sec),
+  requestMediaAccess:   (type)  => ipcRenderer.invoke('request-media-access', type),
 });
