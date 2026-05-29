@@ -85,6 +85,10 @@ async function runRelease() {
 
   // Restore ALL changes: services startup types, firewall profiles, Windows Defender
   await machineCheck.restoreAll().catch(() => {});
+  // Remove Windows Firewall / macOS pfctl rules — must be called here too
+  // because if the machine rebooted while locked, networkMonitor was never started
+  // in this session so the firewall rules from the exam session still survive
+  await networkMonitor.restore().catch(() => {});
 
   // Restore display mode (if we switched to single-display, restore extend)
   if (_displayWasExtended && process.platform === 'win32') {

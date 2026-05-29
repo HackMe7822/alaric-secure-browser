@@ -38,10 +38,22 @@ async function resolveHost(host) {
   console.log('[network] Exam server IPs:', [..._serverIPs]);
 }
 
-// ─── PowerShell helper ────────────────────────────────────────────────────────
+// ─── PowerShell helpers ───────────────────────────────────────────────────────
+// Single-line commands only — uses -Command with quote escaping
 const ps = (cmd) =>
   execAsync(`powershell -NoProfile -NonInteractive -Command "${cmd.replace(/"/g, '\\"')}"`,
     { timeout: 15000 });
+
+// Multi-line scripts — uses -EncodedCommand (base64 UTF-16LE) to bypass
+// cmd.exe newline-splitting which breaks multi-line -Command scripts
+function psBig(script) {
+  const b64 = Buffer.from(script, 'utf16le').toString('base64');
+  return execAsync(`powershell -NoProfile -NonInteractive -EncodedCommand ${b64}`,
+    { timeout: 25000 });
+}
+
+// Only actual IP addresses (not hostnames) are valid for Windows firewall rules
+function isIP(addr) { return /^[\d.:a-fA-F]+$/.test(addr) && addr !== ''; }
 
 // ─── 1. Disable all remote-access protocols (save originals) ─────────────────
 async function disableRemoteProtocols() {
@@ -117,8 +129,9 @@ async function restoreRemoteProtocols() {
       }
       // Restore each service startup type
       const svcMap = {
-        winrmStart: 'WinRM', remRegStart: 'RemoteRegistry',
-        sshdStart: 'sshd', termSvcStart: 'TermService', umRdpStart: 'UmRdpService',
+        winrmStart:  'WinRM',          remRegStart:  'RemoteRegistry',
+        sshdStart:   'sshd',           termSvcStart: 'TermService',
+        umRdpStart:  'UmRdpService',   rdpUdpStart:  'RdpManagerUserModePort',
       };
       for (const [key, svcName] of Object.entries(svcMap)) {
         if (orig[key] && orig[key] !== 'Disabled') {
@@ -144,72 +157,73 @@ async function restoreRemoteProtocols() {
 const LOCAL_PREFIXES = ['127.','0.0.0.0','::1','fe80','169.254.','[::','[:'];
 
 async function killExistingRemoteConnections() {
-  if (process.platform !== 'win32') return; // pfctl handles macOS
+  if (process.platform !== 'win32') return;
 
-  const examIPList = [..._serverIPs].map(ip => `"${ip}"`).join(',');
+  // Only valid IPs — hostname strings don't match TCP connection remote addresses
+  const validIPs = [..._serverIPs].filter(isIP);
+  if (!validIPs.length) {
+    console.warn('[network] killExistingRemoteConnections: no valid IPs — skipping to avoid killing exam server connections');
+    return;
+  }
 
-  // Close existing connections using Remove-NetTCPConnection (doesn't kill the process)
-  // then kill processes that still have remote connections open
+  const examIPList = validIPs.map(ip => `"${ip}"`).join(',');
+
+  // Use psBig (base64 -EncodedCommand) — avoids cmd.exe newline-splitting bug
+  // that made the original ps() multi-line call completely inoperative.
+  // $procId used instead of $pid to avoid shadowing PowerShell's read-only $PID built-in.
   const script = `
-    $examIPs   = @(${examIPList})
-    $localPre  = @("127.","0.0.0.0","::1","fe80","169.254.")
-    $systemPIDs= @(0,4,8)
+$examIPs    = @(${examIPList})
+$localPre   = @('127.','0.0.0.0','::1','fe80','169.254.')
+$systemPIDs = @(0,4,8)
 
-    function IsLocal($ip) {
-      foreach ($p in $localPre) { if ($ip.StartsWith($p)) { return $true } }
-      return $false
+function IsLocal([string]$ip) {
+  foreach ($p in $localPre) { if ($ip.StartsWith($p)) { return $true } }
+  return $false
+}
+function IsExam([string]$ip) { return ($examIPs -contains $ip) }
+
+# Step 1: close TCP connections cleanly via Remove-NetTCPConnection
+try {
+  Get-NetTCPConnection -State Established -ErrorAction SilentlyContinue |
+    Where-Object { -not (IsLocal $_.RemoteAddress) -and -not (IsExam $_.RemoteAddress) } |
+    ForEach-Object {
+      Write-Host "Closing $($_.RemoteAddress):$($_.RemotePort) PID=$($_.OwningProcess)"
+      $_ | Remove-NetTCPConnection -ErrorAction SilentlyContinue
     }
-    function IsExam($ip) { return ($examIPs -contains $ip) }
+} catch {}
 
-    # Step 1: close TCP connections cleanly
-    try {
-      Get-NetTCPConnection -State Established -ErrorAction SilentlyContinue |
-        Where-Object {
-          -not (IsLocal $_.RemoteAddress) -and
-          -not (IsExam  $_.RemoteAddress)
-        } | ForEach-Object {
-          Write-Host "Closing connection to $($_.RemoteAddress):$($_.RemotePort) (PID $($_.OwningProcess))"
-          $_ | Remove-NetTCPConnection -ErrorAction SilentlyContinue
-        }
-    } catch {}
+Start-Sleep -Milliseconds 800
 
-    Start-Sleep -Milliseconds 800
-
-    # Step 2: find processes still with remote connections and stop them
-    # For svchost.exe: stop the service inside it rather than the whole process
-    try {
-      Get-NetTCPConnection -State Established -ErrorAction SilentlyContinue |
-        Where-Object {
-          -not (IsLocal $_.RemoteAddress) -and
-          -not (IsExam  $_.RemoteAddress)
-        } | ForEach-Object {
-          $pid = $_.OwningProcess
-          if ($systemPIDs -contains $pid) { return }
-
-          $proc = Get-Process -Id $pid -ErrorAction SilentlyContinue
-          if (-not $proc) { return }
-
-          $name = $proc.ProcessName.ToLower()
-          Write-Host "Remote connection on PID $pid ($name) -> $($_.RemoteAddress)"
-
-          if ($name -eq "svchost") {
-            # Stop services hosted by this svchost instance (safer than killing svchost)
-            $services = Get-WmiObject Win32_Service -ErrorAction SilentlyContinue |
-              Where-Object { $_.ProcessId -eq $pid -and $_.State -eq "Running" }
-            foreach ($svc in $services) {
-              Write-Host "  Stopping service: $($svc.Name)"
-              Stop-Service -Name $svc.Name -Force -ErrorAction SilentlyContinue
-              Set-Service -Name $svc.Name -StartupType Disabled -ErrorAction SilentlyContinue
-            }
-          } else {
-            Stop-Process -Id $pid -Force -ErrorAction SilentlyContinue
+# Step 2: kill processes that still have remote connections
+# Uses $procId (not $pid) to avoid shadowing PowerShell's read-only built-in $PID
+try {
+  Get-NetTCPConnection -State Established -ErrorAction SilentlyContinue |
+    Where-Object { -not (IsLocal $_.RemoteAddress) -and -not (IsExam $_.RemoteAddress) } |
+    ForEach-Object {
+      $procId = $_.OwningProcess
+      if ($systemPIDs -contains $procId) { return }
+      $proc = Get-Process -Id $procId -ErrorAction SilentlyContinue
+      if (-not $proc) { return }
+      $procName = $proc.ProcessName.ToLower()
+      Write-Host "Killing $procName (PID $procId) -> $($_.RemoteAddress)"
+      if ($procName -eq 'svchost') {
+        # Stop individual services inside svchost rather than killing the host
+        Get-WmiObject Win32_Service -ErrorAction SilentlyContinue |
+          Where-Object { $_.ProcessId -eq $procId -and $_.State -eq 'Running' } |
+          ForEach-Object {
+            Write-Host "  Stopping svc: $($_.Name)"
+            Stop-Service -Name $_.Name -Force -ErrorAction SilentlyContinue
+            Set-Service  -Name $_.Name -StartupType Disabled -ErrorAction SilentlyContinue
           }
-        }
-    } catch {}
-  `;
+      } else {
+        Stop-Process -Id $procId -Force -ErrorAction SilentlyContinue
+      }
+    }
+} catch {}
+`;
 
   try {
-    const result = await ps(script);
+    const result = await psBig(script);
     if (result.stdout.trim()) console.log('[network] Kill remote connections:\n', result.stdout.trim());
   } catch (e) { console.warn('[network] Kill connections error:', e.message); }
 }
@@ -228,7 +242,13 @@ async function applyWindowsRules() {
     // Set default outbound = Block (explicit Allow rules win over this)
     await ps('Set-NetFirewallProfile -All -DefaultOutboundAction Block');
 
-    const ips = [..._serverIPs].join('","');
+    // Windows -RemoteAddress only accepts IP addresses, not hostnames
+    const validIPs = [..._serverIPs].filter(isIP);
+    if (!validIPs.length) {
+      console.warn('[network] No valid IPs to whitelist — firewall will block all (including exam server)');
+      return;
+    }
+    const ips = validIPs.join('","');
 
     // Allow exam server (TCP + UDP for WebRTC)
     await ps(`New-NetFirewallRule -DisplayName "${RULE_PREFIX}ServerTCP" -Direction Outbound -Action Allow -Protocol TCP -RemoteAddress "${ips}"`);
@@ -272,7 +292,8 @@ async function restoreWindowsRules() {
 // ─── 4. macOS pfctl lockdown ──────────────────────────────────────────────────
 async function applyMacRules() {
   if (!_serverIPs.size) return;
-  const ips = [..._serverIPs];
+  const ips = [..._serverIPs].filter(isIP); // pfctl requires IP addresses, not hostnames
+  if (!ips.length) { console.warn('[network] No valid IPs for pfctl'); return; }
   const rules = [
     '# Alaric Exam Network Guard',
     'set skip on lo0',

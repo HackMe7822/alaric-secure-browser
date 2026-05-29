@@ -135,6 +135,12 @@ async function ps(cmd) {
   return stdout.trim();
 }
 
+// Multi-line PS scripts: base64 -EncodedCommand bypasses cmd.exe newline-splitting
+function psBig(script) {
+  const b64 = Buffer.from(script, 'utf16le').toString('base64');
+  return execAsync(`powershell -NoProfile -NonInteractive -EncodedCommand ${b64}`, { timeout: 20000 });
+}
+
 async function sh(cmd) {
   const { stdout } = await execAsync(cmd, { timeout: 10000 });
   return stdout.trim();
@@ -157,7 +163,8 @@ async function checkAntivirus(autoFix = true) {
         const name = (p.displayName || '').toLowerCase();
         if (name.includes('windows defender') || name.includes('microsoft defender')) continue;
         const state = parseInt(p.productState) || 0;
-        if (((state >> 12) & 0xF) === 1 || p.displayName) { thirdPartyActive = p.displayName; break; }
+        // productState bits 12-15 = 1 means enabled/active; only flag if actually active
+        if (((state >> 12) & 0xF) === 1) { thirdPartyActive = p.displayName; break; }
       }
     } catch {}
     if (thirdPartyActive) return { pass: true, msg: `${thirdPartyActive} is active` };
@@ -308,37 +315,41 @@ async function _killProcess(name) {
 
 // ─── Restore all changes made during pre-check / exam ────────────────────────
 async function restoreAll() {
+  // Snapshot ALL state and clear BEFORE any awaits — prevents the watchdog
+  // from writing to _snap between our awaits and corrupting the restore
+  const services          = new Map(_snap.services);   _snap.services.clear();
+  const firewallProfiles  = _snap.firewallProfiles;    _snap.firewallProfiles   = null;
+  const defenderRtDisabled = _snap.defenderRtDisabled; _snap.defenderRtDisabled = null;
+
   const jobs = [];
 
-  // 1. Restore service startup types (Windows + macOS)
-  for (const [, info] of _snap.services) {
-    jobs.push(
-      ps(`Set-Service -Name '${info.name}' -StartupType ${info.startType} -ErrorAction SilentlyContinue`).catch(() => {})
-    );
+  // 1. Restore service startup types
+  for (const [, info] of services) {
+    if (info?.name && info?.startType) {
+      jobs.push(
+        ps(`Set-Service -Name '${info.name}' -StartupType ${info.startType} -ErrorAction SilentlyContinue`).catch(() => {})
+      );
+    }
   }
-  _snap.services.clear();
 
   // 2. Restore firewall profiles
-  if (_snap.firewallProfiles) {
+  if (firewallProfiles) {
     if (process.platform === 'win32') {
-      for (const [name, wasEnabled] of Object.entries(_snap.firewallProfiles)) {
+      for (const [name, wasEnabled] of Object.entries(firewallProfiles)) {
         jobs.push(
           ps(`Set-NetFirewallProfile -Name '${name}' -Enabled ${wasEnabled ? 'True' : 'False'} -ErrorAction SilentlyContinue`).catch(() => {})
         );
       }
-    } else if (_snap.firewallProfiles.macOS === false) {
-      // We turned macOS firewall ON — restore to OFF
+    } else if (firewallProfiles.macOS === false) {
       jobs.push(sh('/usr/libexec/ApplicationFirewall/socketfilterfw --setglobalstate off').catch(() => {}));
     }
-    _snap.firewallProfiles = null;
   }
 
   // 3. Restore Windows Defender RT (only if we turned it ON from OFF)
-  if (_snap.defenderRtDisabled === true && process.platform === 'win32') {
+  if (defenderRtDisabled === true && process.platform === 'win32') {
     jobs.push(
       ps('Set-MpPreference -DisableRealtimeMonitoring $true -ErrorAction SilentlyContinue').catch(() => {})
     );
-    _snap.defenderRtDisabled = null;
   }
 
   await Promise.allSettled(jobs);
@@ -411,19 +422,21 @@ async function checkRemoteSession(autoFix = true) {
 
       // ── Auto-fix: logoff all remote/disconnected sessions ──────────────────
       if (autoFix) {
-        await ps(`
-          $myId = [System.Diagnostics.Process]::GetCurrentProcess().SessionId
-          try {
-            $lines = (query session 2>$null) -split '\`n' | Select-Object -Skip 1
-            foreach ($line in $lines) {
-              if ($line -match '\\s+(\\d+)\\s') {
-                $id = [int]$Matches[1]
-                if ($id -ne $myId -and $id -ne 0) {
-                  logoff $id /server:localhost 2>$null | Out-Null
-                }
-              }
-            }
-          } catch {}
+        // psBig (base64 -EncodedCommand) avoids cmd.exe newline-splitting bug
+        // that made the previous ps() multi-line call completely inoperative
+        await psBig(`
+$mySessionId = [System.Diagnostics.Process]::GetCurrentProcess().SessionId
+try {
+  $lines = (& query session 2>$null) -split '\`n' | Select-Object -Skip 1
+  foreach ($line in $lines) {
+    if ($line -match '\\s+(\\d+)\\s') {
+      $sessionId = [int]$Matches[1]
+      if ($sessionId -ne $mySessionId -and $sessionId -ne 0) {
+        logoff $sessionId /server:localhost 2>$null | Out-Null
+      }
+    }
+  }
+} catch {}
         `).catch(() => {});
         await new Promise(r => setTimeout(r, 1500));
         const recheck = await checkRemoteSession(false);
