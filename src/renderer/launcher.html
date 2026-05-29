@@ -415,7 +415,7 @@ function goStep(n) {
 }
 
 // ─── Step 1: URL entry ────────────────────────────────────────────────────────
-document.getElementById('btn-continue-1').onclick = () => {
+document.getElementById('btn-continue-1').onclick = async () => {
   const raw = document.getElementById('exam-url').value.trim();
   if (!raw) { showUrlError('Please paste your exam URL or token.'); return; }
 
@@ -645,14 +645,13 @@ async function runChecks() {
           fix:  'Unplug all external monitors physically and re-run checks',
         };
       }
-    } else if (process.platform === 'win32') {
+    } else if ((API?.platform || 'win32') === 'win32') {
       results.displays = {
         pass: false,
         msg:  `${displayCount} displays detected — could not auto-disconnect`,
         fix:  'Win + P → "PC screen only", or unplug external monitors',
       };
     } else {
-      // macOS: no reliable programmatic fix without code-signing
       results.displays = {
         pass: false,
         msg:  `${displayCount} displays detected`,
@@ -970,6 +969,13 @@ function handleUpdateStatus(d) {
       _updateBlocking  = true;
       break;
 
+    case 'pending_restart':
+      // Update downloaded but deferred because exam is in progress
+      banner.className = 'checking';
+      icon.textContent = '⏸';
+      msg.textContent  = `Update v${d.version} ready — will install after exam completes`;
+      break;
+
     case 'error':
       banner.className = 'error';
       icon.textContent = '⚠';
@@ -994,13 +1000,13 @@ if (API?.getAppVersion) {
 
 // Block btn-continue-1 while update is downloading/installing
 const _origContinue1 = document.getElementById('btn-continue-1').onclick;
-document.getElementById('btn-continue-1').onclick = function(e) {
+document.getElementById('btn-continue-1').onclick = async function(e) {
   if (_updateBlocking) {
     const msg = document.getElementById('upd-msg').textContent;
     showUrlError('Please wait — ' + msg);
     return;
   }
-  if (_origContinue1) _origContinue1.call(this, e);
+  if (_origContinue1) await _origContinue1.call(this, e);
 };
 
 // ─── Boot ─────────────────────────────────────────────────────────────────────

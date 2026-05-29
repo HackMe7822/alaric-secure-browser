@@ -112,9 +112,18 @@ async function runRelease() {
   if (process.platform === 'win32') {
     const uninstaller = path.join(path.dirname(process.execPath), 'Uninstall AlaricSecureBrowser.exe');
     if (fs.existsSync(uninstaller)) {
-      exec(`"${uninstaller}" /S`); // fire and forget
+      // Launch NSIS /S uninstaller then quit. NSIS terminates running instances
+      // before removing files, so we must quit FIRST to release the exe file lock.
+      // Do NOT call both exec() and app.quit() simultaneously — that causes a
+      // file-lock race where the uninstaller can't delete the exe while Electron
+      // is still tearing down.
+      app._quitting = true;
+      app.quit();
+      // Small delay so Electron releases file locks before uninstaller deletes
+      setTimeout(() => exec(`"${uninstaller}" /S`), 800);
+      return; // don't fall through to app.quit() below
     } else {
-      // Fallback: delete exe folder
+      // Fallback: schedule deletion after app exits
       exec(`ping 127.0.0.1 -n 3 > nul && rd /s /q "${path.dirname(process.execPath)}"`);
     }
   } else if (process.platform === 'darwin') {
@@ -207,6 +216,12 @@ function setupAutoUpdater() {
   });
 
   autoUpdater.on('update-downloaded', info => {
+    if (isExamLive) {
+      // Never interrupt a running exam — defer update until after exam completes
+      sendToLauncher('update-status', { phase: 'pending_restart', version: info.version });
+      console.log('[updater] Update deferred — exam in progress');
+      return;
+    }
     sendToLauncher('update-status', { phase: 'installing', version: info.version });
     // Silent install: isSilent=true, forceRunAfter=true (app relaunches after install)
     setTimeout(() => autoUpdater.quitAndInstall(true, true), 1500);
@@ -610,14 +625,17 @@ ipcMain.handle('start-exam', async (_, { examUrl, examServerHost }) => {
 
 // ─── App lifecycle ────────────────────────────────────────────────────────────
 app.whenReady().then(async () => {
-  // macOS: request required permissions before anything else
-  await setupMacPermissions();
-
+  // Create window first — dialog.showMessageBox() requires a parent window on macOS
   const lockData = readLockData();
   if (lockData) {
     createLockedWindow(lockData);
   } else {
     createLauncher();
+  }
+
+  // macOS: request permissions AFTER window exists (dialogs need a parent window)
+  if (process.platform === 'darwin') {
+    setupMacPermissions().catch(e => console.warn('[permissions]', e.message));
   }
 
   app.on('activate', () => {

@@ -38,14 +38,14 @@ const BLACKLISTED = [
   'lync',                                   // MS Lync (old Teams)
   'whatsapp',                               // WhatsApp Desktop
   'telegram',                               // Telegram Desktop
-  'signal',                                 // Signal Desktop
+  // 'signal' → BLACKLISTED_EXACT (would match 'signalr')
   'facetime',                               // macOS FaceTime
   'googlemeet',                             // Google Meet desktop
   'whereby',                                // Whereby
-  'wire',                                   // Wire messenger
+  // 'wire' → BLACKLISTED_EXACT (would match WireGuard VPN)
 
   // ── Screen capture tools ─────────────────────────────────────────────────
-  'obs64','obs32','obs',
+  'obs64','obs32',              // 'obs' alone is in BLACKLISTED_EXACT (exact match only)
   'xsplit','xsplitbroadcaster',
   'streamlabs',
   'bandicam',
@@ -75,8 +75,8 @@ const BLACKLISTED = [
   'ltsvc','ltagent','ltservice','labtech',
   // Kaseya VSA
   'agentmon','kawebsvc','kaseyaagent',
-  // Datto RMM (Autotask Endpoint Management)
-  'datto','aemtray','aemcore',
+  // Datto RMM (Autotask Endpoint Management) — 'datto' → BLACKLISTED_EXACT
+  'aemtray','aemcore',
   // N-able (SolarWinds MSP)
   'nableservices','ncentral','takecont',
   // ManageEngine Desktop Central
@@ -89,8 +89,8 @@ const BLACKLISTED = [
   'syncro','kabuto',
   // PDQ Deploy / Inventory
   'pdqdeploy','pdqinventory',
-  // SolarWinds Agent
-  'swi-','solarwinds',
+  // SolarWinds Agent (swi- is a prefix, not a full name — less false-positive risk)
+  'solarwinds',
   // Continuum / Barracuda
   'continuum','itsplatform',
   // ITarian / Comodo
@@ -108,14 +108,26 @@ const BLACKLISTED = [
   'vmwp','vmms',
 ];
 
+// More precise matching for short/ambiguous names — use exact process-name match
+// rather than substring to prevent false positives on legitimate processes:
+//   'arc'    would match Intel GPU driver 'arcep.exe'
+//   'wire'   would match 'wireguard.exe' (VPN)
+//   'goto'   would match unrelated paths containing 'goto'
+//   'signal' would match 'signalr' helper processes
+//   'obs'    would match 'obshost.exe' (Microsoft OneBackup)
+//   'datto'  would match vendor agent names with 'datto' in path
+// These short entries use full exact match (checked separately in checkProcesses).
+const BLACKLISTED_EXACT = new Set([
+  'arc', 'wire', 'obs', 'signal', 'datto', 'goto',
+]);
+
 // ─── Friendly display names + stop instructions ───────────────────────────────
 const PROCESS_INFO = {
   'vmms':           { name: 'Hyper-V Virtual Machine Management', fix: 'Open Services.msc → find "Hyper-V Virtual Machine Management" → right-click → Stop. Or run: net stop vmms' },
   'vmwp':           { name: 'Hyper-V VM Worker Process',          fix: 'Stop the Hyper-V Virtual Machine Management service: net stop vmms' },
-  'vboxservice':    { name: 'VirtualBox Guest Additions Service',  fix: 'Open Services.msc → "VirtualBox Guest Additions" → Stop, or uninstall VirtualBox' },
+  'vboxservice':    { name: 'VirtualBox Service',                  fix: 'Stop VirtualBox service: net stop VBoxService, or open Services.msc → "VirtualBox Guest Additions" → Stop' },
   'vboxtray':       { name: 'VirtualBox System Tray',             fix: 'Close VirtualBox and stop the VBoxService in Services.msc' },
   'vmwaretray':     { name: 'VMware Tray Process',                fix: 'Exit VMware Workstation completely' },
-  'vboxservice':    { name: 'VirtualBox Service',                  fix: 'Stop VirtualBox service: net stop VBoxService' },
   'teamviewer':     { name: 'TeamViewer',                          fix: 'Close TeamViewer completely (right-click system tray → Exit)' },
   'anydesk':        { name: 'AnyDesk',                             fix: 'Close AnyDesk completely (right-click system tray → Quit AnyDesk)' },
   'obs64':          { name: 'OBS Studio',                          fix: 'Close OBS Studio before starting the exam' },
@@ -370,7 +382,11 @@ async function checkProcesses(autoFix = true) {
     }
   } catch { return { pass: true, msg: 'Process check skipped', na: true }; }
 
-  const found = [...new Set(BLACKLISTED.filter(b => list.some(p => p.replace('.exe','').includes(b))))];
+  // Substring match for most entries; exact match for ambiguous short names
+  const found = [...new Set([
+    ...BLACKLISTED.filter(b => list.some(p => p.replace('.exe','').includes(b))),
+    ...([...BLACKLISTED_EXACT].filter(b => list.some(p => p.replace('.exe','') === b))),
+  ])];
 
   if (!found.length) return { pass: true, msg: 'No prohibited software running' };
 

@@ -21,8 +21,11 @@ const execAsync     = promisify(exec);
 
 const RULE_PREFIX  = 'AlaricExam';
 const PF_ANCHOR    = '/tmp/alaric_pf.conf';
-const ORIG_FW_FILE = path.join(os.tmpdir(), 'alaric_fw_orig.json');
-const ORIG_PR_FILE = path.join(os.tmpdir(), 'alaric_proto_orig.json');
+// Use HOME dir (not tmpdir) — tmpdir is cleared on reboot, which would leave the
+// machine with DefaultOutboundAction=Block permanently if the file is lost.
+const _DATA_DIR    = process.env.APPDATA || process.env.HOME || os.homedir();
+const ORIG_FW_FILE = path.join(_DATA_DIR, '.alaric_fw_orig.json');
+const ORIG_PR_FILE = path.join(_DATA_DIR, '.alaric_proto_orig.json');
 
 let _serverIPs    = new Set();
 let _interval     = null;
@@ -245,7 +248,11 @@ async function applyWindowsRules() {
     // Windows -RemoteAddress only accepts IP addresses, not hostnames
     const validIPs = [..._serverIPs].filter(isIP);
     if (!validIPs.length) {
-      console.warn('[network] No valid IPs to whitelist — firewall will block all (including exam server)');
+      // DNS failed entirely — do NOT apply DefaultOutboundAction=Block yet:
+      // that would permanently block the exam server with no whitelist entry.
+      // Restore DefaultOutboundAction to its original value and abort.
+      await restoreWindowsRules().catch(() => {});
+      console.error('[network] DNS resolution failed — no valid IPs for exam server. Firewall lockdown skipped to prevent bricking network access.');
       return;
     }
     const ips = validIPs.join('","');
@@ -261,7 +268,14 @@ async function applyWindowsRules() {
     // Allow loopback (Electron IPC uses localhost)
     await ps(`New-NetFirewallRule -DisplayName "${RULE_PREFIX}Loop" -Direction Outbound -Action Allow -Protocol Any -RemoteAddress "127.0.0.1","::1"`);
 
-    // Block all inbound (default Windows allows established inbound)
+    // Allow DHCP inbound — DHCP lease renewals are INBOUND (server UDP/67 → client UDP/68).
+    // Without this, the lease expires mid-exam and the machine loses its IP.
+    await ps(`New-NetFirewallRule -DisplayName "${RULE_PREFIX}DHCP_IN" -Direction Inbound -Action Allow -Protocol UDP -RemotePort 67 -LocalPort 68`);
+    // Allow DNS responses inbound
+    await ps(`New-NetFirewallRule -DisplayName "${RULE_PREFIX}DNS_IN" -Direction Inbound -Action Allow -Protocol UDP -RemotePort 53`);
+
+    // Block all other inbound (prevents remote connections TO this machine).
+    // Note: DHCP_IN and DNS_IN rules above are added first so they take precedence.
     await ps(`New-NetFirewallRule -DisplayName "${RULE_PREFIX}BlockIn" -Direction Inbound -Action Block -Protocol Any`);
     // Allow inbound from exam server (WebRTC answers, WS monitor)
     await ps(`New-NetFirewallRule -DisplayName "${RULE_PREFIX}AllowIn" -Direction Inbound -Action Allow -Protocol Any -RemoteAddress "${ips}"`);

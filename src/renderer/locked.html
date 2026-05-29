@@ -76,15 +76,33 @@
 
       <div class="timer-block">Machine locked for: <strong id="lock-timer">calculating…</strong></div>
 
-      <button class="release-btn" id="release-btn" onclick="doRelease()">
-        🗑 Release Machine &amp; Uninstall
-      </button>
+      <!-- Step 1: initial button -->
+      <div id="release-step-1">
+        <button class="release-btn" onclick="showReleaseConfirm()">
+          🗑 Release Machine &amp; Uninstall
+        </button>
+      </div>
+
+      <!-- Step 2: inline confirmation (replaces step 1 — avoids confirm() which is blocked in Electron) -->
+      <div id="release-step-2" style="display:none">
+        <p style="color:#fca5a5;font-size:13px;font-weight:600;margin-bottom:12px;line-height:1.5">
+          ⚠ This will remove the exam lock, restore all services, uninstall Alaric Secure Browser, and delete exam data from this machine. Cannot be undone.
+        </p>
+        <div style="display:flex;gap:10px">
+          <button class="release-btn" id="release-btn" onclick="doRelease()" style="flex:1">
+            ✓ Yes, Release &amp; Uninstall
+          </button>
+          <button onclick="hideReleaseConfirm()"
+            style="flex:1;padding:14px;background:#1e293b;color:#94a3b8;border:1px solid #334155;border-radius:10px;font-size:0.95rem;font-weight:700;cursor:pointer">
+            Cancel
+          </button>
+        </div>
+      </div>
 
       <p class="status-msg" id="status-msg"></p>
 
       <p class="warning">
-        ⚠ This will uninstall Alaric Secure Browser, restore all services and settings, and delete exam data from this machine.<br>
-        This action cannot be undone.
+        Alaric Secure Browser • Machine Locked
       </p>
     </div>
   </div>
@@ -122,32 +140,27 @@ API?.onLockData?.((data) => {
   }
 });
 
+function showReleaseConfirm() {
+  document.getElementById('release-step-1').style.display = 'none';
+  document.getElementById('release-step-2').style.display = '';
+}
+function hideReleaseConfirm() {
+  document.getElementById('release-step-2').style.display = 'none';
+  document.getElementById('release-step-1').style.display = '';
+}
+
 async function doRelease() {
   const btn = document.getElementById('release-btn');
   const msg = document.getElementById('status-msg');
-
-  const ok = confirm(
-    'Release this machine?\n\n' +
-    'This will:\n' +
-    '• Remove the exam lock and auto-start\n' +
-    '• Restore all services and settings\n' +
-    '• Uninstall Alaric Secure Browser\n' +
-    '• Delete all exam data from this machine\n\n' +
-    'This cannot be undone.'
-  );
-  if (!ok) return;
 
   btn.disabled = true;
   btn.innerHTML = '<div class="spinner"></div> Releasing — please wait…';
   msg.textContent = 'Stopping services, restoring settings…';
 
-  try {
-    await API?.releaseMachine?.();
-  } catch(e) {
-    msg.textContent = 'Error: ' + e.message;
-    btn.disabled = false;
-    btn.innerHTML = '🗑 Release Machine & Uninstall';
-  }
+  // releaseMachine() calls app.quit() on the main process — the IPC reply
+  // will never arrive (app exits first). That is expected and fine.
+  // We just fire it and let the app terminate naturally.
+  API?.releaseMachine?.().catch(() => {});
 }
 </script>
 </body>
