@@ -364,24 +364,24 @@ async function _killProcess(name) {
         await ps(`Set-Service -Name '${svc}' -StartupType Disabled -ErrorAction SilentlyContinue; Stop-Service -Name '${svc}' -Force -ErrorAction SilentlyContinue`).catch(() => {});
       }
 
-      // STEP 2: Brute-force kill the process by every available method
-      // Use psBig (base64 encoded) so multi-line script passes correctly through cmd.exe
+      // STEP 2: Kill via WMI Terminate() — most forceful, bypasses process protections
+      // WMI Win32_Process.Terminate() works even when taskkill and Stop-Process fail
       await psBig(`
 $n = '${name}'
-# Kill by exact name
-Get-Process -Name $n -ErrorAction SilentlyContinue | ForEach-Object {
-  try { $_.Kill($true) } catch {}
+# WMI Terminate — calls TerminateProcess() via kernel, most reliable method
+Get-WmiObject Win32_Process | Where-Object {
+  $_.Name -like "*$n*"
+} | ForEach-Object {
+  try { $_.Terminate() | Out-Null } catch {}
 }
+# Also via Stop-Process as secondary
 Stop-Process -Name $n -Force -ErrorAction SilentlyContinue
-# Kill all processes whose path contains the name (catches renamed exes)
-Get-Process -ErrorAction SilentlyContinue | Where-Object {
-  $_.MainModule.FileName -like "*$n*" -or $_.ProcessName -like "*$n*"
-} | ForEach-Object { try { $_.Kill($true) } catch {} }
 `).catch(() => {});
 
-      // Also try taskkill with /f /t (force terminate tree) without quotes
+      // wmic command-line fallback (different execution path from PowerShell WMI)
+      await execAsync(`wmic process where "name like '%${name}%'" call terminate 2>nul`, { timeout: 8000 }).catch(() => {});
+      // taskkill with /t (tree) as final fallback
       await execAsync(`taskkill /f /t /im ${name}.exe 2>nul`, { timeout: 5000 }).catch(() => {});
-      await execAsync(`taskkill /f    /im ${name}.exe 2>nul`, { timeout: 5000 }).catch(() => {});
     } else {
       await execAsync(`pkill -9 -f "${name}" 2>/dev/null || true`, { timeout: 5000 }).catch(() => {});
     }
