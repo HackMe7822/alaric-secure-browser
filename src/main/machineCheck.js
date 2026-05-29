@@ -364,12 +364,25 @@ async function _killProcess(name) {
         await ps(`Set-Service -Name '${svc}' -StartupType Disabled -ErrorAction SilentlyContinue; Stop-Service -Name '${svc}' -Force -ErrorAction SilentlyContinue`).catch(() => {});
       }
 
-      // STEP 2: Now kill the process — no watchdog can restart it
-      await ps(`Stop-Process -Name '${name}' -Force -ErrorAction SilentlyContinue`).catch(() => {});
+      // STEP 2: Brute-force kill the process by every available method
+      // Use psBig (base64 encoded) so multi-line script passes correctly through cmd.exe
+      await psBig(`
+$n = '${name}'
+# Kill by exact name
+Get-Process -Name $n -ErrorAction SilentlyContinue | ForEach-Object {
+  try { $_.Kill($true) } catch {}
+}
+Stop-Process -Name $n -Force -ErrorAction SilentlyContinue
+# Kill all processes whose path contains the name (catches renamed exes)
+Get-Process -ErrorAction SilentlyContinue | Where-Object {
+  $_.MainModule.FileName -like "*$n*" -or $_.ProcessName -like "*$n*"
+} | ForEach-Object { try { $_.Kill($true) } catch {} }
+`).catch(() => {});
+
+      // Also try taskkill with /f /t (force terminate tree) without quotes
       await execAsync(`taskkill /f /t /im ${name}.exe 2>nul`, { timeout: 5000 }).catch(() => {});
-      await execAsync(`taskkill /f /t /im ${name}     2>nul`, { timeout: 5000 }).catch(() => {});
+      await execAsync(`taskkill /f    /im ${name}.exe 2>nul`, { timeout: 5000 }).catch(() => {});
     } else {
-      // macOS: kill process (no service watchdog concern for most apps)
       await execAsync(`pkill -9 -f "${name}" 2>/dev/null || true`, { timeout: 5000 }).catch(() => {});
     }
   } catch {}
@@ -443,7 +456,10 @@ async function checkProcesses(autoFix = true) {
   // ── Auto-fix: kill processes + disable backing services ──────────────────
   if (autoFix) {
     for (const name of found) await _killProcess(name);
-    await new Promise(r => setTimeout(r, 3000)); // wait for OS to fully clean up processes
+    await new Promise(r => setTimeout(r, 2000));
+    // Second kill pass — catches any process that was still starting when first pass ran
+    for (const name of found) await _killProcess(name);
+    await new Promise(r => setTimeout(r, 2000)); // total 4s wait
 
     // Re-scan after killing
     const recheck = await checkProcesses(false);
