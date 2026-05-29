@@ -305,6 +305,17 @@ const PROCESS_TO_SERVICE = {
   'supremo':         ['SupremoService'],
   'dwagent':         ['dwservice'],
   'parsec':          ['Parsec'],
+  // RMM agents with watchdog services — must disable service or process restarts immediately
+  'ninjarmm':        ['NinjaRMMAgent', 'ninjarmm', 'NinjaRMM'],
+  'ninjaone':        ['NinjaRMMAgent', 'ninjarmm'],
+  'ninjapsfacade':   ['NinjaRMMAgent'],
+  'ltsvc':           ['LTService', 'LTSvcMon'],
+  'ltagent':         ['LTService', 'LTSvcMon'],
+  'agentmon':        ['KaseyaAgent'],
+  'aemtray':         ['AEMAgent'],
+  'ateraagent':      ['AteraAgent'],
+  'pulseway':        ['Pulseway'],
+  'splashtop':       ['SplashtopService', 'SplashtopStreamingService'],
 };
 
 async function _stopAndDisableService(rawName) {
@@ -542,8 +553,9 @@ async function checkServices(autoFix = true) {
         const exactRaw = await ps(
           `Get-Service | Where-Object {$_.Status -eq 'Running' -and $_.Name -like '*${svcFragment}*'} | Select-Object -ExpandProperty Name`
         );
-        const exact = exactRaw.trim();
-        if (exact) await _stopAndDisableService(exact);
+        // Split by newline — multiple services may match one fragment (e.g. splashtop)
+        const names = exactRaw.trim().split(/\r?\n/).map(s => s.trim()).filter(Boolean);
+        for (const name of names) await _stopAndDisableService(name);
       } catch {}
     }
 

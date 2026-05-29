@@ -600,6 +600,15 @@ ipcMain.handle('fix-multi-monitor', async () => {
   return { ok, displayCount: screen.getAllDisplays().length };
 });
 
+ipcMain.handle('restore-display', async () => {
+  // Restore to extended/multi-monitor mode (undo switchToInternalDisplay)
+  if (process.platform === 'win32') {
+    await execAsync('DisplaySwitch.exe /extend', { timeout: 8000 }).catch(() => {});
+    _displayWasExtended = false;
+  }
+  return { displayCount: screen.getAllDisplays().length };
+});
+
 ipcMain.handle('check-for-update', () => {
   if (app.isPackaged) autoUpdater.checkForUpdates().catch(() => {});
 });
@@ -635,20 +644,11 @@ ipcMain.handle('start-exam', async (_, { examUrl, examServerHost }) => {
 
 // ─── App lifecycle ────────────────────────────────────────────────────────────
 app.whenReady().then(async () => {
-  // On Windows packaged builds: check admin rights and auto-relaunch if missing.
-  // Without admin, every service/process/firewall operation silently fails.
-  if (process.platform === 'win32' && app.isPackaged) {
-    try {
-      await execAsync('net session >nul 2>&1', { timeout: 4000 });
-      // Admin confirmed — continue normally
-    } catch {
-      // Not admin — relaunch with elevation (triggers UAC prompt)
-      exec(`powershell -Command "Start-Process '${process.execPath}' -Verb RunAs"`,
-        () => { app._quitting = true; app.quit(); }
-      );
-      return; // Exit current non-admin instance
-    }
-  }
+  // NOTE: Admin elevation is handled by the exe manifest (requestedExecutionLevel:
+  // requireAdministrator in package.json). Windows automatically prompts UAC when
+  // launching the app — including when opened via alaricexam:// deep link.
+  // We do NOT do a runtime relaunch here because that loses the deep link argv.
+  // The pre-check in Step 2 shows a clear admin rights error if somehow not elevated.
 
   // Create window first — dialog.showMessageBox() requires a parent window on macOS
   const lockData = readLockData();

@@ -296,6 +296,10 @@ nav{background:var(--nav-bg);color:var(--nav-text);display:flex;align-items:cent
         <div class="checks-list" id="checks-list"></div>
       </div>
       <div class="card-footer">
+        <button class="btn btn-secondary" id="btn-restore-display" style="display:none"
+          title="Restore multi-monitor layout" onclick="restoreDisplays()">
+          🖥 Restore Displays
+        </button>
         <button class="btn btn-secondary" id="btn-retry" style="display:none" onclick="runChecks()">
           <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M1 4v6h6M23 20v-6h-6"/><path d="M20.49 9A9 9 0 105.64 5.64L1 10M23 14l-4.64 4.36A9 9 0 013.51 15"/></svg>
           Re-run Checks
@@ -687,6 +691,8 @@ async function runChecks() {
       const newCount = fixResult.displayCount ?? await API.getDisplayCount().catch(() => displayCount);
       if (newCount === 1) {
         results.displays = { pass: true, msg: 'Extra display auto-disconnected — single monitor active', fixed: true };
+      // Show restore button so user can get their second monitor back if needed
+      document.getElementById('btn-restore-display').style.display = '';
       } else {
         results.displays = {
           pass: false,
@@ -885,6 +891,15 @@ function openPcUpload() {
 }
 
 // drawQR removed — QR is now a real PNG from the server GET /qr?url=...
+
+async function restoreDisplays() {
+  const btn = document.getElementById('btn-restore-display');
+  if (btn) { btn.disabled = true; btn.textContent = '⏳ Restoring…'; }
+  await API?.restoreDisplay?.().catch(() => {});
+  if (btn) { btn.disabled = false; btn.style.display = 'none'; }
+  // Re-run checks so display count updates
+  await runChecks();
+}
 
 // ─── Step 3: Waiting room ─────────────────────────────────────────────────────
 async function startWaitingRoom() {

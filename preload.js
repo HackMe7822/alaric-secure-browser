@@ -31,7 +31,9 @@ contextBridge.exposeInMainWorld('AlaricProctor', {
   },
 
   // Auto-disconnect duplicate monitors (Windows: DisplaySwitch /internal)
-  fixMultiMonitor:   () => ipcRenderer.invoke('fix-multi-monitor'),
+  fixMultiMonitor:    () => ipcRenderer.invoke('fix-multi-monitor'),
+  // Restore multi-monitor (DisplaySwitch /extend) — undo after exam / during testing
+  restoreDisplay:     () => ipcRenderer.invoke('restore-display'),
 
   // Screen capture for exam recording (returns desktopCapturer source ID)
   getScreenSourceId: () => ipcRenderer.invoke('get-screen-source'),
