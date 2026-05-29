@@ -367,9 +367,13 @@ nav{background:var(--nav-bg);color:var(--nav-text);display:flex;align-items:cent
               <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.07em;color:#64748b;margin-bottom:6px">Scan with Phone</div>
               <img id="qr-img" width="140" height="140"
                 style="border-radius:8px;border:1px solid #e2e8f0;display:block;background:#f8fafc"
-                alt="QR Code loading…"
-                onerror="this.alt='QR unavailable — type the code manually'">
-              <div style="font-size:10px;color:#64748b;text-align:center;margin-top:4px">Point camera here</div>
+                alt="Loading QR…"
+                onerror="this.style.display='none';document.getElementById('qr-fallback').style.display=''">
+              <div id="qr-fallback" style="display:none;background:#f1f5f9;border:1px solid #e2e8f0;border-radius:8px;padding:10px;width:140px;text-align:center">
+                <div style="font-size:10px;color:#64748b;margin-bottom:6px">QR unavailable — open on phone:</div>
+                <a id="qr-link" href="#" style="font-size:11px;font-weight:700;color:#4f46e5;word-break:break-all" onclick="API?.openExternal?.(this.href);return false"></a>
+              </div>
+              <div style="font-size:10px;color:#64748b;text-align:center;margin-top:4px">Scan with phone camera</div>
             </div>
           </div>
 
@@ -840,10 +844,10 @@ async function startVerification() {
 
     // Generate real QR code via server endpoint
     const verifyUrl = `https://${_examHost}/verify/${_verifyCode}`;
-    const qrImg = document.getElementById('qr-img');
-    if (qrImg) {
-      qrImg.src = `https://${_examHost}/qr?url=${encodeURIComponent(verifyUrl)}`;
-    }
+    const qrImg  = document.getElementById('qr-img');
+    const qrLink = document.getElementById('qr-link');
+    if (qrImg)  qrImg.src = `https://${_examHost}/qr?url=${encodeURIComponent(verifyUrl)}`;
+    if (qrLink) { qrLink.href = verifyUrl; qrLink.textContent = verifyUrl; }
 
     // Start polling for status
     updateVerifyStatus(d.status || 'pending');
@@ -906,8 +910,13 @@ function updateVerifyStatus(status, photos) {
 function openPcUpload() {
   if (!_verifyCode || !_examHost) return;
   const url = `https://${_examHost}/verify/${_verifyCode}`;
-  if (API?.openExternal) API.openExternal(url);
-  else window.open(url, '_blank');
+  // Open inside Electron (not Chrome) — we killed all external browsers for security
+  if (API?.openVerifyWindow) {
+    API.openVerifyWindow(url);
+  } else {
+    // Fallback: open in same renderer via navigation (if IPC not available)
+    window.open(url, '_verify', 'width=480,height=750,resizable=yes,scrollbars=yes');
+  }
 }
 
 // drawQR removed — QR is now a real PNG from the server GET /qr?url=...

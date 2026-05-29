@@ -30,6 +30,8 @@ contextBridge.exposeInMainWorld('AlaricProctor', {
     ipcRenderer.on('start-exam-signal', (_, data) => cb(data));
   },
 
+  // Open verify/upload page inside Electron (not external browser)
+  openVerifyWindow:   (url) => ipcRenderer.invoke('open-verify-window', url),
   // Auto-disconnect duplicate monitors (Windows: DisplaySwitch /internal)
   fixMultiMonitor:    () => ipcRenderer.invoke('fix-multi-monitor'),
   // Restore multi-monitor (DisplaySwitch /extend) — undo after exam / during testing

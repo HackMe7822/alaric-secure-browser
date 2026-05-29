@@ -600,6 +600,20 @@ ipcMain.handle('fix-multi-monitor', async () => {
   return { ok, displayCount: screen.getAllDisplays().length };
 });
 
+ipcMain.handle('open-verify-window', (_, url) => {
+  // Open the verify/upload page inside Electron — never in an external browser
+  const win = new BrowserWindow({
+    width:  500,
+    height: 800,
+    title:  'Identity Verification — Alaric',
+    parent: launcherWin || undefined,
+    modal:  false,
+    webPreferences: { contextIsolation: true, nodeIntegration: false },
+  });
+  win.setMenu(null);
+  win.loadURL(url);
+});
+
 ipcMain.handle('restore-display', async () => {
   // Restore to extended/multi-monitor mode (undo switchToInternalDisplay)
   if (process.platform === 'win32') {
