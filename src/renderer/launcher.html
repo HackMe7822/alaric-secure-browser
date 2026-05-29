@@ -846,8 +846,21 @@ async function startVerification() {
     const verifyUrl = `https://${_examHost}/verify/${_verifyCode}`;
     const qrImg  = document.getElementById('qr-img');
     const qrLink = document.getElementById('qr-link');
-    if (qrImg)  qrImg.src = `https://${_examHost}/qr?url=${encodeURIComponent(verifyUrl)}`;
     if (qrLink) { qrLink.href = verifyUrl; qrLink.textContent = verifyUrl; }
+    if (qrImg) {
+      // Generate QR locally via Electron main process (no server/CORS dependency)
+      if (API?.generateQR) {
+        const dataUrl = await API.generateQR(verifyUrl).catch(() => null);
+        if (dataUrl) {
+          qrImg.src = dataUrl;
+        } else {
+          // Fallback: try server endpoint
+          qrImg.src = `https://${_examHost}/qr?url=${encodeURIComponent(verifyUrl)}`;
+        }
+      } else {
+        qrImg.src = `https://${_examHost}/qr?url=${encodeURIComponent(verifyUrl)}`;
+      }
+    }
 
     // Start polling for status
     updateVerifyStatus(d.status || 'pending');

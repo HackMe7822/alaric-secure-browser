@@ -12,6 +12,7 @@
   "dependencies": {
     "electron-updater": "^6.3.9",
     "node-machine-id": "^1.1.12",
+    "qrcode": "^1.5.4",
     "uiohook-napi": "^1.5.3"
   },
   "devDependencies": {
@@ -45,7 +46,9 @@
       "target": [
         {
           "target": "nsis",
-          "arch": ["x64"]
+          "arch": [
+            "x64"
+          ]
         }
       ],
       "requestedExecutionLevel": "requireAdministrator",
@@ -53,8 +56,20 @@
     },
     "mac": {
       "target": [
-        { "target": "zip", "arch": ["x64", "arm64"] },
-        { "target": "dmg", "arch": ["x64", "arm64"] }
+        {
+          "target": "zip",
+          "arch": [
+            "x64",
+            "arm64"
+          ]
+        },
+        {
+          "target": "dmg",
+          "arch": [
+            "x64",
+            "arm64"
+          ]
+        }
       ],
       "icon": "assets/icon.png",
       "hardenedRuntime": false,
@@ -72,7 +87,9 @@
     "protocols": [
       {
         "name": "Alaric Exam",
-        "schemes": ["alaricexam"]
+        "schemes": [
+          "alaricexam"
+        ]
       }
     ]
   }

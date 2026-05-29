@@ -600,6 +600,14 @@ ipcMain.handle('fix-multi-monitor', async () => {
   return { ok, displayCount: screen.getAllDisplays().length };
 });
 
+ipcMain.handle('generate-qr', async (_, url) => {
+  try {
+    const QRCode = require('qrcode');
+    // Returns base64 data URL — no server, no CORS, works offline
+    return await QRCode.toDataURL(url, { width: 220, margin: 2, color: { dark: '#1e293b', light: '#ffffff' } });
+  } catch(e) { return null; }
+});
+
 ipcMain.handle('open-verify-window', (_, url) => {
   const win = new BrowserWindow({
     width:  500,

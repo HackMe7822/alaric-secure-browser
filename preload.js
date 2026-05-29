@@ -30,6 +30,8 @@ contextBridge.exposeInMainWorld('AlaricProctor', {
     ipcRenderer.on('start-exam-signal', (_, data) => cb(data));
   },
 
+  // Generate QR code locally (no server, no CORS issues)
+  generateQR:         (url) => ipcRenderer.invoke('generate-qr', url),
   // Open verify/upload page inside Electron (not external browser)
   openVerifyWindow:   (url) => ipcRenderer.invoke('open-verify-window', url),
   // Auto-disconnect duplicate monitors (Windows: DisplaySwitch /internal)
