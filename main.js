@@ -213,9 +213,12 @@ function createExamWindow(examUrl) {
   isExamLive = true;
 
   examWin.on('closed', () => {
-    examWin  = null;
+    examWin    = null;
     isExamLive = false;
     stopSecurity();
+    machineCheck.stopWatchdog();
+    // Restore original startup types for any services we disabled during exam
+    machineCheck.restoreServices().catch(() => {});
     networkMonitor.restore().finally(() => app.quit());
   });
 }
@@ -304,6 +307,10 @@ ipcMain.handle('get-screen-source', async () => {
 
 ipcMain.handle('start-exam', async (_, { examUrl, examServerHost }) => {
   startSecurity(examServerHost);
+  // Start service/process watchdog — auto-kills anything that restarts during exam
+  machineCheck.startWatchdog((ev) => {
+    if (examWin && !examWin.isDestroyed()) examWin.webContents.send('security-event', ev);
+  });
   if (launcherWin) launcherWin.hide();
   createExamWindow(examUrl);
   return { success: true };

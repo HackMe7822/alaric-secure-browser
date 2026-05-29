@@ -552,6 +552,15 @@ async function runChecks() {
 
   _machineId = await API.getMachineId().catch(() => 'unknown');
 
+  // Show "Auto-fixing…" on services + processes items while checks run
+  // (they run sequentially and may take a few seconds to stop services)
+  ['services', 'processes'].forEach(id => {
+    const ci = document.getElementById(`ci-${id}`);
+    const cm = document.getElementById(`cm-${id}`);
+    if (ci) { ci.className = 'check-icon loading'; ci.textContent = '⟳'; }
+    if (cm) cm.textContent = 'Scanning & auto-fixing…';
+  });
+
   // Pass precheck config to main process — it skips disabled OS checks for performance
   const [osResults, displayCount] = await Promise.all([
     API.runMachineChecks(_precheckConfig).catch(e => ({ error: e.message })),
@@ -607,9 +616,9 @@ async function runChecks() {
   CHECK_DEFS.forEach(def => {
     const r = results[def.id];
     if (!r) return;
-    const isSkipped = r.skipped;
-    const isNA = r.na;
-    const pass = r.pass || isNA;
+    const isNA    = r.na;
+    const isFixed = r.fixed;          // auto-fixed by the app
+    const pass    = r.pass || isNA;
     const item = document.getElementById(`chk-${def.id}`);
     const icon = document.getElementById(`ci-${def.id}`);
     const msg  = document.getElementById(`cm-${def.id}`);
@@ -618,10 +627,16 @@ async function runChecks() {
     item.className = 'check-item ' + (isNA ? '' : pass ? 'pass' : 'fail');
     icon.className = 'check-icon '  + (isNA ? 'na' : pass ? 'pass' : 'fail');
     icon.textContent = isNA ? '—' : pass ? '✓' : '✗';
-    msg.textContent  = r.msg || '';
-    msg.className    = 'check-msg ' + (pass ? '' : 'fail');
 
-    if (!pass && r.fix) { fix.textContent = r.fix; fix.style.display = ''; }
+    // Show "Auto-fixed" tag if the app resolved the issue automatically
+    if (isFixed) {
+      msg.innerHTML = `<span style="color:var(--success);font-weight:700">⚙ Auto-fixed:</span> ${r.msg}`;
+    } else {
+      msg.textContent = r.msg || '';
+    }
+    msg.className = 'check-msg ' + (pass ? '' : 'fail');
+
+    if (!pass && r.fix) { fix.textContent = '⚡ ' + r.fix; fix.style.display = ''; }
     if (!pass && def.critical) { allCriticalPass = false; failCount++; }
   });
 
