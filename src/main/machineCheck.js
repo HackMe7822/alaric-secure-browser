@@ -57,16 +57,8 @@ const BLACKLISTED = [
   'greenshot',
   'screenpresso',
 
-  // ── Browsers (exam runs in Electron kiosk — no browser should be open) ───
-  'chrome','googlechrome',
-  'firefox','firefoxdeveloperedi',
-  'msedge','microsoftedge','msedgewebview2',
-  'opera',
-  'brave',
-  'iexplore',
-  'safari',
-  'vivaldi',
-  'arc',
+  // Browsers removed from auto-kill list — Edge/Arc are system processes that
+  // resist killing. Instead, checkBrowsers() detects them and asks user to close.
 
   // ── RMM / endpoint management tools (can be used for remote access) ──────
   // NinjaRMM
@@ -277,6 +269,40 @@ async function checkFirewall(autoFix = true) {
       return { pass: true, msg: 'macOS Firewall enabled' };
     } catch { return { pass: true, msg: 'Firewall check skipped', na: true }; }
   }
+}
+
+// ─── Browser detection (detect only — no auto-kill) ─────────────────────────
+// Edge is a system-integrated browser on Windows 11 that resists force-kill.
+// Arc.exe is the Intel Arc GPU driver. Neither should be auto-killed.
+// We just detect and ask the user to close browsers manually.
+const BROWSER_NAMES = [
+  'msedge','microsoftedge','chrome','googlechrome',
+  'firefox','firefoxdeveloperedi','opera','brave',
+  'safari','vivaldi','iexplore','arc',
+];
+
+async function checkBrowsers() {
+  try {
+    let list = [];
+    if (process.platform === 'win32') {
+      const { stdout } = await execAsync('tasklist /fo csv /nh', { timeout: 8000 });
+      list = stdout.split('\n')
+        .map(l => l.replace(/"/g,'').toLowerCase().split(',')[0].replace('.exe','').trim())
+        .filter(Boolean);
+    } else {
+      const { stdout } = await execAsync('ps -ax -o comm=', { timeout: 8000 });
+      list = stdout.split('\n')
+        .map(l => require('path').basename(l.trim()).toLowerCase().replace('.exe',''))
+        .filter(Boolean);
+    }
+    const found = [...new Set(BROWSER_NAMES.filter(b => list.some(p => p === b || p.startsWith(b))))];
+    if (!found.length) return { pass: true, msg: 'No browsers open' };
+    return {
+      pass: false,
+      msg:  `Browser open: ${found.join(', ')}`,
+      fix:  'Close all browser windows, then click Re-run Checks',
+    };
+  } catch { return { pass: true, msg: 'Browser check skipped', na: true }; }
 }
 
 // ─── Central snapshot — tracks EVERY change so restoreAll() can undo it ──────
@@ -643,12 +669,13 @@ async function runAll(config = {}) {
   if (on('services'))  services  = await checkServices(autoFix).catch(e  => ({ pass: false, msg: e.message }));
   if (on('processes')) processes = await checkProcesses(autoFix).catch(e => ({ pass: false, msg: e.message }));
 
-  // Remaining checks in parallel (each auto-fixes independently)
-  const [av, fw, vm, remote] = await Promise.allSettled([
+  // Remaining checks in parallel
+  const [av, fw, vm, remote, browsers] = await Promise.allSettled([
     on('antivirus') ? checkAntivirus(autoFix)      : Promise.resolve(NA),
     on('firewall')  ? checkFirewall(autoFix)       : Promise.resolve(NA),
     on('vm')        ? checkVirtualMachine()        : Promise.resolve(NA),
     on('remote')    ? checkRemoteSession(autoFix)  : Promise.resolve(NA),
+    checkBrowsers(),                               // always run browser check
   ]);
   const r = x => x.status === 'fulfilled' ? x.value : { pass: false, msg: x.reason?.message || 'Check failed' };
 
@@ -662,6 +689,7 @@ async function runAll(config = {}) {
     virtualMachine: r(vm),
     remoteSession:  r(remote),
     services,
+    browsers:       r(browsers),
   };
 }
 

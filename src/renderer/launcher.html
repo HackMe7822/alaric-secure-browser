@@ -621,7 +621,8 @@ async function grantPerm(key) {
 // ─── Step 2: Machine checks ───────────────────────────────────────────────────
 // All possible checks — filtered at runtime by _precheckConfig
 const ALL_CHECK_DEFS = [
-  { id: 'admin',     label: 'Administrator Rights',     critical: true, cfgKey: null        }, // always checked
+  { id: 'admin',     label: 'Administrator Rights',     critical: true, cfgKey: null        },
+  { id: 'browsers',  label: 'No Browsers Open',         critical: true, cfgKey: null        }, // always checked
   { id: 'displays',  label: 'Single Monitor',           critical: true, cfgKey: 'displays'  },
   { id: 'antivirus', label: 'Antivirus / EDR Active',   critical: true, cfgKey: 'antivirus' },
   { id: 'firewall',  label: 'Firewall Enabled',          critical: true, cfgKey: 'firewall'  },
@@ -731,6 +732,7 @@ async function runChecks() {
   }
 
   results.admin      = osResults.adminRights    || { pass: true, msg: 'N/A', na: true };
+  results.browsers   = osResults.browsers       || { pass: true, msg: 'N/A', na: true };
   results.antivirus  = osResults.antivirus      || { pass: true, msg: 'N/A', na: true };
   results.firewall   = osResults.firewall       || { pass: true, msg: 'N/A', na: true };
   results.processes  = osResults.processes      || { pass: true, msg: 'N/A', na: true };
