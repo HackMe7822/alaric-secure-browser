@@ -1087,6 +1087,7 @@ API?.onProtocolUrl?.((rawUrl) => {
 // ─── Auto-update — FULL SCREEN overlay before Step 1 ─────────────────────────
 let _updateBlocking = false;
 let _updateDone     = false;
+let _updatePhase    = '';   // tracks current phase so 'checking' timeout doesn't fire during 'downloading'
 
 function updEl(id) { return document.getElementById(id); }
 
@@ -1115,13 +1116,16 @@ function skipUpdate() { hideUpdateScreen(); }
 function handleUpdateStatus(d) {
   const verEl = updEl('app-ver');
   if (d.version) verEl.textContent = 'v' + d.version;
+  _updatePhase = d.phase; // track phase BEFORE the switch so timeouts can check it
 
   switch (d.phase) {
     case 'checking':
       showUpdateScreen('🔍', 'Checking for updates…',
         'Please wait — verifying you have the latest version before proceeding.',
         null, false);
-      setTimeout(() => { if (!_updateDone) hideUpdateScreen(); }, 12000);
+      // Only hide if we're STILL in 'checking' when the timeout fires.
+      // Without this, the timeout fires during 'downloading' and flashes Step 1.
+      setTimeout(() => { if (_updatePhase === 'checking') hideUpdateScreen(); }, 12000);
       break;
 
     case 'current':
