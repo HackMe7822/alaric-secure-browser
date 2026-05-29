@@ -215,29 +215,29 @@ async function checkServices() {
   return { pass: true, msg: 'No blacklisted services running' };
 }
 
-// ─── Run all ──────────────────────────────────────────────────────────────────
-async function runAll() {
-  const [av, firewall, procs, vm, remote, services] = await Promise.allSettled([
-    checkAntivirus(),
-    checkFirewall(),
-    checkProcesses(),
-    checkVirtualMachine(),
-    checkRemoteSession(),
-    checkServices(),
-  ]);
+// ─── Run all (config controls which checks are enabled) ───────────────────────
+// config: { antivirus, firewall, processes, services, vm, remote } — undefined or true = run
+async function runAll(config = {}) {
+  const on = key => config[key] !== false; // missing/true/1 = enabled; false/0 = skip
 
+  const NA = { pass: true, msg: 'Skipped by exam settings', na: true, skipped: true };
+
+  const jobs = {
+    antivirus:      on('antivirus')  ? checkAntivirus()      : Promise.resolve(NA),
+    firewall:       on('firewall')   ? checkFirewall()        : Promise.resolve(NA),
+    processes:      on('processes')  ? checkProcesses()       : Promise.resolve(NA),
+    virtualMachine: on('vm')         ? checkVirtualMachine()  : Promise.resolve(NA),
+    remoteSession:  on('remote')     ? checkRemoteSession()   : Promise.resolve(NA),
+    services:       on('services')   ? checkServices()        : Promise.resolve(NA),
+  };
+
+  const keys = Object.keys(jobs);
+  const settled = await Promise.allSettled(Object.values(jobs));
   const resolve = r => r.status === 'fulfilled' ? r.value : { pass: false, msg: r.reason?.message || 'Check failed' };
 
-  return {
-    platform:  process.platform,
-    timestamp: Date.now(),
-    antivirus:     resolve(av),
-    firewall:      resolve(firewall),
-    processes:     resolve(procs),
-    virtualMachine:resolve(vm),
-    remoteSession: resolve(remote),
-    services:      resolve(services),
-  };
+  const result = { platform: process.platform, timestamp: Date.now() };
+  keys.forEach((k, i) => { result[k] = resolve(settled[i]); });
+  return result;
 }
 
 module.exports = { runAll, checkProcesses, BLACKLISTED };

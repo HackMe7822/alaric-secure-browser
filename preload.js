@@ -7,7 +7,7 @@ contextBridge.exposeInMainWorld('AlaricProctor', {
   platform: process.platform,
 
   // ── Launcher APIs ──────────────────────────────────────────
-  runMachineChecks:  ()              => ipcRenderer.invoke('run-machine-checks'),
+  runMachineChecks:  (cfg)           => ipcRenderer.invoke('run-machine-checks', cfg),
   getDisplayCount:   ()              => ipcRenderer.invoke('get-display-count'),
   checkRemoteSession:()              => ipcRenderer.invoke('check-remote-session'),
   getMachineId:      ()              => ipcRenderer.invoke('get-machine-id'),

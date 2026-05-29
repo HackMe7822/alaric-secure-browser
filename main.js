@@ -250,7 +250,7 @@ function stopSecurity() {
 }
 
 // ─── IPC handlers ─────────────────────────────────────────────────────────────
-ipcMain.handle('run-machine-checks', () => machineCheck.runAll());
+ipcMain.handle('run-machine-checks', (_, config) => machineCheck.runAll(config || {}));
 
 ipcMain.handle('get-display-count', () => screen.getAllDisplays().length);
 

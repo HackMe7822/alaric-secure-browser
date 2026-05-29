@@ -395,6 +395,7 @@ const _RTC_CONFIG = {
 };
 let _camPc  = null;
 let _camIce = [];
+let _precheckConfig = {}; // populated from exam API in Step 1
 
 // ─── Step navigation ──────────────────────────────────────────────────────────
 function goStep(n) {
@@ -455,6 +456,36 @@ document.getElementById('btn-continue-1').onclick = () => {
   }
 
   hideUrlError();
+
+  // Fetch exam precheck config before advancing to Step 2
+  const btn1 = document.getElementById('btn-continue-1');
+  btn1.disabled = true;
+  btn1.textContent = 'Loading exam…';
+  try {
+    const r = await fetch(`https://${_examHost}/exam/${_examToken}`, { signal: AbortSignal.timeout(8000) });
+    if (r.ok) {
+      const data = await r.json();
+      const ex = data.exam || {};
+      // Build precheck config — undefined/null/1 = enabled, 0 = disabled
+      const on = k => ex[k] !== 0 && ex[k] !== false;
+      _precheckConfig = {
+        antivirus: on('check_antivirus'),
+        firewall:  on('check_firewall'),
+        processes: on('check_processes'),
+        services:  on('check_services'),
+        vm:        on('check_vm'),
+        remote:    on('check_remote'),
+        displays:  on('check_displays'),
+        camera:    on('check_camera'),
+        mic:       on('check_mic'),
+      };
+    }
+  } catch(e) {
+    // If fetch fails, run all checks (safe default)
+  }
+  btn1.disabled = false;
+  btn1.textContent = 'Continue →';
+
   goStep(2);
   runChecks();
 };
@@ -473,18 +504,27 @@ function hideUrlError() {
 }
 
 // ─── Step 2: Machine checks ───────────────────────────────────────────────────
-const CHECK_DEFS = [
-  { id: 'displays',  label: 'Single Monitor',          critical: true },
-  { id: 'antivirus', label: 'Antivirus / EDR Active',  critical: true, winOnly: true },
-  { id: 'firewall',  label: 'Firewall Enabled',         critical: true },
-  { id: 'processes', label: 'No Prohibited Software',  critical: true },
-  { id: 'services',  label: 'No Remote Services',      critical: true, winOnly: true },
-  { id: 'vm',        label: 'Physical Machine',         critical: true },
-  { id: 'remote',    label: 'No Active Remote Session',critical: true },
-  { id: 'camera',    label: 'Camera Available',         critical: true },
-  { id: 'mic',       label: 'Microphone Available',     critical: true },
-  { id: 'internet',  label: 'Exam Server Reachable',   critical: true },
+// All possible checks — filtered at runtime by _precheckConfig
+const ALL_CHECK_DEFS = [
+  { id: 'displays',  label: 'Single Monitor',           critical: true, cfgKey: 'displays'  },
+  { id: 'antivirus', label: 'Antivirus / EDR Active',   critical: true, cfgKey: 'antivirus' },
+  { id: 'firewall',  label: 'Firewall Enabled',          critical: true, cfgKey: 'firewall'  },
+  { id: 'processes', label: 'No Prohibited Software',   critical: true, cfgKey: 'processes' },
+  { id: 'services',  label: 'No Remote Services',       critical: true, cfgKey: 'services'  },
+  { id: 'vm',        label: 'Physical Machine',          critical: true, cfgKey: 'vm'        },
+  { id: 'remote',    label: 'No Active Remote Session',  critical: true, cfgKey: 'remote'    },
+  { id: 'camera',    label: 'Camera Available',          critical: true, cfgKey: 'camera'    },
+  { id: 'mic',       label: 'Microphone Available',      critical: true, cfgKey: 'mic'       },
+  { id: 'internet',  label: 'Exam Server Reachable',    critical: true, cfgKey: null         }, // always required
 ];
+
+function getActiveCheckDefs() {
+  return ALL_CHECK_DEFS.filter(c => {
+    if (!c.cfgKey) return true; // internet: always run
+    const v = _precheckConfig[c.cfgKey];
+    return v === undefined || v === true || v === 1 || v === null;
+  });
+}
 
 async function runChecks() {
   document.getElementById('btn-retry').style.display = 'none';
@@ -492,6 +532,9 @@ async function runChecks() {
   const sum = document.getElementById('checks-summary');
   sum.className = 'checks-summary running';
   sum.innerHTML = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" style="animation:spin .9s linear infinite;flex-shrink:0"><path d="M21 12a9 9 0 11-6.219-8.56"/></svg>Running checks…`;
+
+  // Only show checks enabled by this exam's config
+  const CHECK_DEFS = getActiveCheckDefs();
 
   const list = document.getElementById('checks-list');
   list.innerHTML = '';
@@ -509,8 +552,9 @@ async function runChecks() {
 
   _machineId = await API.getMachineId().catch(() => 'unknown');
 
+  // Pass precheck config to main process — it skips disabled OS checks for performance
   const [osResults, displayCount] = await Promise.all([
-    API.runMachineChecks().catch(e => ({ error: e.message })),
+    API.runMachineChecks(_precheckConfig).catch(e => ({ error: e.message })),
     API.getDisplayCount().catch(() => 1),
   ]);
 
@@ -520,27 +564,35 @@ async function runChecks() {
     ? { pass: true, msg: '1 display detected' }
     : { pass: false, msg: `${displayCount} displays detected`, fix: 'Disconnect all external monitors and re-run checks' };
 
-  results.antivirus  = osResults.antivirus     || { pass: true, msg: 'N/A', na: true };
-  results.firewall   = osResults.firewall      || { pass: true, msg: 'N/A', na: true };
-  results.processes  = osResults.processes     || { pass: true, msg: 'N/A', na: true };
-  results.services   = osResults.services      || { pass: true, msg: 'N/A', na: true };
-  results.vm         = osResults.virtualMachine|| { pass: true, msg: 'Physical machine confirmed' };
-  results.remote     = osResults.remoteSession || { pass: true, msg: 'No remote session' };
+  results.antivirus  = osResults.antivirus      || { pass: true, msg: 'N/A', na: true };
+  results.firewall   = osResults.firewall       || { pass: true, msg: 'N/A', na: true };
+  results.processes  = osResults.processes      || { pass: true, msg: 'N/A', na: true };
+  results.services   = osResults.services       || { pass: true, msg: 'N/A', na: true };
+  results.vm         = osResults.virtualMachine || { pass: true, msg: 'Physical machine confirmed' };
+  results.remote     = osResults.remoteSession  || { pass: true, msg: 'No remote session' };
 
-  try {
-    const s = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
-    s.getTracks().forEach(t => t.stop());
-    results.camera = { pass: true, msg: 'Camera available' };
-  } catch(e) {
-    results.camera = { pass: false, msg: 'Camera not accessible' + (e.name === 'NotAllowedError' ? ' — permission denied' : ''), fix: 'Allow camera access in system settings and re-run checks' };
+  if (_precheckConfig.camera !== false) {
+    try {
+      const s = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+      s.getTracks().forEach(t => t.stop());
+      results.camera = { pass: true, msg: 'Camera available' };
+    } catch(e) {
+      results.camera = { pass: false, msg: 'Camera not accessible' + (e.name === 'NotAllowedError' ? ' — permission denied' : ''), fix: 'Allow camera access in system settings and re-run checks' };
+    }
+  } else {
+    results.camera = { pass: true, msg: 'Skipped by exam settings', na: true, skipped: true };
   }
 
-  try {
-    const s = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
-    s.getTracks().forEach(t => t.stop());
-    results.mic = { pass: true, msg: 'Microphone available' };
-  } catch(e) {
-    results.mic = { pass: false, msg: 'Microphone not accessible', fix: 'Allow microphone access in system settings' };
+  if (_precheckConfig.mic !== false) {
+    try {
+      const s = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+      s.getTracks().forEach(t => t.stop());
+      results.mic = { pass: true, msg: 'Microphone available' };
+    } catch(e) {
+      results.mic = { pass: false, msg: 'Microphone not accessible', fix: 'Allow microphone access in system settings' };
+    }
+  } else {
+    results.mic = { pass: true, msg: 'Skipped by exam settings', na: true, skipped: true };
   }
 
   try {
@@ -555,6 +607,7 @@ async function runChecks() {
   CHECK_DEFS.forEach(def => {
     const r = results[def.id];
     if (!r) return;
+    const isSkipped = r.skipped;
     const isNA = r.na;
     const pass = r.pass || isNA;
     const item = document.getElementById(`chk-${def.id}`);
