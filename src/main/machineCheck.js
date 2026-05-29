@@ -60,7 +60,7 @@ const BLACKLISTED = [
   // ── Browsers (exam runs in Electron kiosk — no browser should be open) ───
   'chrome','googlechrome',
   'firefox','firefoxdeveloperedi',
-  'msedge','microsoftedgecp',
+  'msedge','microsoftedge','msedgewebview2',
   'opera',
   'brave',
   'iexplore',
@@ -305,6 +305,10 @@ const PROCESS_TO_SERVICE = {
   'supremo':         ['SupremoService'],
   'dwagent':         ['dwservice'],
   'parsec':          ['Parsec'],
+  // Browsers — disable update service so browser can't auto-restart
+  'msedge':          ['edgeupdate', 'edgeupdatem'],
+  'microsoftedge':   ['edgeupdate', 'edgeupdatem'],
+  'chrome':          ['GoogleChromeElevationService'],
   // RMM agents with watchdog services — must disable service or process restarts immediately
   'ninjarmm':        ['NinjaRMMAgent', 'ninjarmm', 'NinjaRMM'],
   'ninjaone':        ['NinjaRMMAgent', 'ninjarmm'],
@@ -351,12 +355,17 @@ async function _stopAndDisableService(rawName) {
 async function _killProcess(name) {
   try {
     if (process.platform === 'win32') {
-      await execAsync(`taskkill /f /im "${name}.exe" 2>nul`, { timeout: 5000 }).catch(() => {});
-      await execAsync(`taskkill /f /im "${name}"     2>nul`, { timeout: 5000 }).catch(() => {});
+      // PowerShell Stop-Process: kills ALL instances by exact name, no quote issues
+      await ps(`Stop-Process -Name '${name}' -Force -ErrorAction SilentlyContinue`).catch(() => {});
+      // Also try with .exe suffix (some apps register differently)
+      await ps(`Stop-Process -Name '${name.replace(/\.exe$/i,'')}' -Force -ErrorAction SilentlyContinue`).catch(() => {});
+      // taskkill with /t (terminate process TREE) and no quotes — belt and suspenders
+      await execAsync(`taskkill /f /t /im ${name}.exe 2>nul`, { timeout: 5000 }).catch(() => {});
+      await execAsync(`taskkill /f /t /im ${name}     2>nul`, { timeout: 5000 }).catch(() => {});
     } else {
       await execAsync(`pkill -9 -f "${name}" 2>/dev/null || true`, { timeout: 5000 }).catch(() => {});
     }
-    // Also disable any backing service
+    // Also stop and disable any backing watchdog service
     const svcNames = PROCESS_TO_SERVICE[name.toLowerCase()] || [];
     for (const svc of svcNames) await _stopAndDisableService(svc);
   } catch {}
@@ -430,7 +439,7 @@ async function checkProcesses(autoFix = true) {
   // ── Auto-fix: kill processes + disable backing services ──────────────────
   if (autoFix) {
     for (const name of found) await _killProcess(name);
-    await new Promise(r => setTimeout(r, 1200)); // wait for OS to clean up
+    await new Promise(r => setTimeout(r, 3000)); // wait for OS to fully clean up processes
 
     // Re-scan after killing
     const recheck = await checkProcesses(false);
