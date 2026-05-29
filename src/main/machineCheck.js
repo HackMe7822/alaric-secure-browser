@@ -68,6 +68,38 @@ const BLACKLISTED = [
   'vivaldi',
   'arc',
 
+  // ── RMM / endpoint management tools (can be used for remote access) ──────
+  // NinjaRMM
+  'ninjarmm','ninjaone','ninjapsfacade',
+  // ConnectWise Automate (LabTech)
+  'ltsvc','ltagent','ltservice','labtech',
+  // Kaseya VSA
+  'agentmon','kawebsvc','kaseyaagent',
+  // Datto RMM (Autotask Endpoint Management)
+  'datto','aemtray','aemcore',
+  // N-able (SolarWinds MSP)
+  'nableservices','ncentral','takecont',
+  // ManageEngine Desktop Central
+  'desktopcentral','dcagentservice',
+  // Atera
+  'atera','ateraagent',
+  // Pulseway
+  'pulseway',
+  // Syncro / RepairShopr
+  'syncro','kabuto',
+  // PDQ Deploy / Inventory
+  'pdqdeploy','pdqinventory',
+  // SolarWinds Agent
+  'swi-','solarwinds',
+  // Continuum / Barracuda
+  'continuum','itsplatform',
+  // ITarian / Comodo
+  'comodoremotecontrol','crm_service',
+  // LogMeIn Central
+  'logmeinrescue','rescuedesktop',
+  // GoTo Resolve (formerly GoToAssist)
+  'goto','gotoassist','gotoresolve',
+
   // ── Virtual machines ─────────────────────────────────────────────────────
   'vmware','vmwaretray','vmwareuser','vmware-vmx',
   'virtualbox','vboxservice','vboxtray',
@@ -417,7 +449,23 @@ async function checkRemoteSession(autoFix = true) {
   return { pass: true, msg: 'No remote desktop session active' };
 }
 
-const SERVICE_BLACKLIST = ['teamviewer','anydesk','ultravnc','ultraviewer','rustdesk','vmms','vboxservice','parsec','dwservice','supremo','screenconnect','logmeinremoteaccess'];
+const SERVICE_BLACKLIST = [
+  // Remote access / screen share
+  'teamviewer','anydesk','ultravnc','ultraviewer','rustdesk','vmms',
+  'vboxservice','parsec','dwservice','supremo','screenconnect','logmeinremoteaccess',
+  'splashtop','radmin','getscreen','ammyyadmin',
+  // RMM tools — caught by name even if process is renamed
+  'ltsvc','ltagent','labtech',          // ConnectWise Automate
+  'agentmon','kawebsvc',                // Kaseya
+  'aemtray','aemcore',                  // Datto RMM
+  'nableservices','ncentral',           // N-able
+  'desktopcentral','dcagentservice',    // ManageEngine
+  'ateraagent',                         // Atera
+  'pulseway',                           // Pulseway
+  'syncro',                             // Syncro
+  // Windows built-in remote services (disabled by disableRemoteProtocols but also checked here)
+  'termservice','umrdpservice','winrm','remoteregistry','sshd',
+];
 
 async function _getRunningBlacklistedServices() {
   if (process.platform !== 'win32') return [];

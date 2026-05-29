@@ -1,28 +1,28 @@
 /**
- * networkMonitor.js — Network lockdown during exam
+ * networkMonitor.js — Total network lockdown during exam
  *
- * Strategy:
- *   Windows: Set DefaultOutboundAction=Block on all profiles, then add explicit
- *            Allow rules for exam server IPs, DNS, DHCP, loopback.
- *            Block rules added AFTER setting default: explicit Allow rules always
- *            win over the default policy, so exam server traffic gets through.
+ * Three-layer approach:
+ *  1. Disable remote-access protocols at the OS level (RDP, WinRM, SSH, etc.)
+ *  2. Firewall: DefaultOutboundAction=Block + Allow exam-server IPs only
+ *  3. Kill/close any process/connection that already has a remote TCP session
+ *     (catches legitimately-named rootkits — they still need the network)
  *
- *   macOS:   Write pfctl anchor rules: pass exam server, DNS, loopback;
- *            block everything else (both directions).
- *
- * On restore: removes all AlaricExam* rules, restores original DefaultOutboundAction.
+ * On restore: remove firewall rules, restore original protocol states,
+ *             restore original DefaultOutboundAction.
  */
 'use strict';
 const { exec }      = require('child_process');
 const { promisify } = require('util');
 const dns           = require('dns').promises;
 const fs            = require('fs');
+const os            = require('os');
 const path          = require('path');
 const execAsync     = promisify(exec);
 
 const RULE_PREFIX  = 'AlaricExam';
 const PF_ANCHOR    = '/tmp/alaric_pf.conf';
-const ORIG_FW_FILE = path.join(require('os').tmpdir(), 'alaric_fw_orig.json');
+const ORIG_FW_FILE = path.join(os.tmpdir(), 'alaric_fw_orig.json');
+const ORIG_PR_FILE = path.join(os.tmpdir(), 'alaric_proto_orig.json');
 
 let _serverIPs    = new Set();
 let _interval     = null;
@@ -31,72 +31,231 @@ let _rulesApplied = false;
 
 // ─── DNS resolve ──────────────────────────────────────────────────────────────
 async function resolveHost(host) {
-  const addAll = (arr) => arr.forEach(ip => _serverIPs.add(ip));
-  try { addAll(await dns.resolve4(host)); } catch {}
-  try { addAll(await dns.resolve6(host)); } catch {}
-  // Also allow the raw host string if resolution fails
+  const add = (arr) => arr.forEach(ip => _serverIPs.add(ip));
+  try { add(await dns.resolve4(host)); } catch {}
+  try { add(await dns.resolve6(host)); } catch {}
   if (_serverIPs.size === 0 && host) _serverIPs.add(host);
   console.log('[network] Exam server IPs:', [..._serverIPs]);
 }
 
-// ─── Windows Firewall ─────────────────────────────────────────────────────────
-async function applyWindowsRules() {
-  if (!_serverIPs.size) return;
+// ─── PowerShell helper ────────────────────────────────────────────────────────
+const ps = (cmd) =>
+  execAsync(`powershell -NoProfile -NonInteractive -Command "${cmd.replace(/"/g, '\\"')}"`,
+    { timeout: 15000 });
 
-  const ps = (cmd) =>
-    execAsync(`powershell -NoProfile -NonInteractive -Command "${cmd}"`, { timeout: 12000 });
+// ─── 1. Disable all remote-access protocols (save originals) ─────────────────
+async function disableRemoteProtocols() {
+  if (process.platform === 'win32') {
+    // Save current state of every remote-access protocol
+    const orig = {};
+    const safe = async (key, cmd) => { try { orig[key] = (await ps(cmd)).stdout.trim(); } catch { orig[key] = ''; } };
+
+    await safe('rdpDeny',       '(Get-ItemProperty "HKLM:\\System\\CurrentControlSet\\Control\\Terminal Server" -ErrorAction SilentlyContinue).fDenyTSConnections');
+    await safe('winrmStart',    '(Get-Service WinRM          -ErrorAction SilentlyContinue).StartType');
+    await safe('remRegStart',   '(Get-Service RemoteRegistry -ErrorAction SilentlyContinue).StartType');
+    await safe('sshdStart',     '(Get-Service sshd           -ErrorAction SilentlyContinue).StartType');
+    await safe('termSvcStart',  '(Get-Service TermService    -ErrorAction SilentlyContinue).StartType');
+    await safe('umRdpStart',    '(Get-Service UmRdpService   -ErrorAction SilentlyContinue).StartType');
+    await safe('rdpUdpStart',   '(Get-Service RdpManagerUserModePort -ErrorAction SilentlyContinue).StartType');
+
+    fs.writeFileSync(ORIG_PR_FILE, JSON.stringify(orig));
+
+    // ── Disable RDP (block at registry + stop services) ───────────────────
+    await ps('Set-ItemProperty "HKLM:\\System\\CurrentControlSet\\Control\\Terminal Server" -Name fDenyTSConnections -Value 1').catch(() => {});
+    await ps('Stop-Service TermService    -Force -ErrorAction SilentlyContinue').catch(() => {});
+    await ps('Stop-Service UmRdpService   -Force -ErrorAction SilentlyContinue').catch(() => {});
+    await ps('Stop-Service SessionEnv    -Force -ErrorAction SilentlyContinue').catch(() => {});
+    await ps('Set-Service TermService    -StartupType Disabled -ErrorAction SilentlyContinue').catch(() => {});
+    await ps('Set-Service UmRdpService   -StartupType Disabled -ErrorAction SilentlyContinue').catch(() => {});
+
+    // ── Disable WinRM (PowerShell Remoting) ───────────────────────────────
+    await ps('Stop-Service WinRM -Force -ErrorAction SilentlyContinue').catch(() => {});
+    await ps('Set-Service WinRM -StartupType Disabled -ErrorAction SilentlyContinue').catch(() => {});
+
+    // ── Disable Remote Registry ───────────────────────────────────────────
+    await ps('Stop-Service RemoteRegistry -Force -ErrorAction SilentlyContinue').catch(() => {});
+    await ps('Set-Service RemoteRegistry -StartupType Disabled -ErrorAction SilentlyContinue').catch(() => {});
+
+    // ── Disable OpenSSH server (optional — might not exist) ───────────────
+    await ps('Stop-Service sshd -Force -ErrorAction SilentlyContinue').catch(() => {});
+    await ps('Set-Service sshd -StartupType Disabled -ErrorAction SilentlyContinue').catch(() => {});
+
+    // ── Block RDP port 3389 explicitly (belt-and-suspenders) ─────────────
+    await ps(`New-NetFirewallRule -DisplayName "${RULE_PREFIX}BlockRDP3389" -Direction Inbound -Protocol TCP -LocalPort 3389 -Action Block -ErrorAction SilentlyContinue`).catch(() => {});
+    await ps(`New-NetFirewallRule -DisplayName "${RULE_PREFIX}BlockVNC5900"  -Direction Inbound -Protocol TCP -LocalPort 5900-5910 -Action Block -ErrorAction SilentlyContinue`).catch(() => {});
+    await ps(`New-NetFirewallRule -DisplayName "${RULE_PREFIX}BlockSSH22"    -Direction Inbound -Protocol TCP -LocalPort 22 -Action Block -ErrorAction SilentlyContinue`).catch(() => {});
+
+    console.log('[network] Remote access protocols disabled');
+  } else if (process.platform === 'darwin') {
+    const orig = {};
+    // Save SSH state
+    try { orig.sshEnabled = (await execAsync('systemsetup -getremotelogin 2>/dev/null')).stdout.includes('On'); } catch { orig.sshEnabled = false; }
+    // Save Screen Sharing state
+    try { orig.screenShare = fs.existsSync('/Library/Preferences/com.apple.ScreenSharing.plist'); } catch { orig.screenShare = false; }
+    fs.writeFileSync(ORIG_PR_FILE, JSON.stringify(orig));
+
+    // Disable SSH
+    await execAsync('launchctl unload -w /System/Library/LaunchDaemons/ssh.plist 2>/dev/null || true').catch(() => {});
+    await execAsync('systemsetup -setremotelogin off 2>/dev/null || true').catch(() => {});
+    // Disable Screen Sharing
+    await execAsync('launchctl unload -w /System/Library/LaunchDaemons/com.apple.screensharing.plist 2>/dev/null || true').catch(() => {});
+    // Disable Apple Remote Desktop
+    await execAsync('/System/Library/CoreServices/RemoteManagement/ARDAgent.app/Contents/Resources/kickstart -deactivate -stop 2>/dev/null || true').catch(() => {});
+
+    console.log('[network] macOS remote access protocols disabled');
+  }
+}
+
+async function restoreRemoteProtocols() {
+  if (!fs.existsSync(ORIG_PR_FILE)) return;
+  try {
+    const orig = JSON.parse(fs.readFileSync(ORIG_PR_FILE, 'utf8'));
+    if (process.platform === 'win32') {
+      // Restore RDP registry key
+      if (orig.rdpDeny !== undefined) {
+        await ps(`Set-ItemProperty "HKLM:\\System\\CurrentControlSet\\Control\\Terminal Server" -Name fDenyTSConnections -Value ${orig.rdpDeny || 1}`).catch(() => {});
+      }
+      // Restore each service startup type
+      const svcMap = {
+        winrmStart: 'WinRM', remRegStart: 'RemoteRegistry',
+        sshdStart: 'sshd', termSvcStart: 'TermService', umRdpStart: 'UmRdpService',
+      };
+      for (const [key, svcName] of Object.entries(svcMap)) {
+        if (orig[key] && orig[key] !== 'Disabled') {
+          await ps(`Set-Service ${svcName} -StartupType ${orig[key]} -ErrorAction SilentlyContinue`).catch(() => {});
+        }
+      }
+    } else if (process.platform === 'darwin') {
+      if (orig.sshEnabled) {
+        await execAsync('launchctl load -w /System/Library/LaunchDaemons/ssh.plist 2>/dev/null || true').catch(() => {});
+      }
+      if (orig.screenShare) {
+        await execAsync('launchctl load -w /System/Library/LaunchDaemons/com.apple.screensharing.plist 2>/dev/null || true').catch(() => {});
+      }
+    }
+    fs.unlinkSync(ORIG_PR_FILE);
+    console.log('[network] Remote protocols restored');
+  } catch (e) { console.warn('[network] Protocol restore error:', e.message); }
+}
+
+// ─── 2. Kill/close existing remote connections ────────────────────────────────
+// This catches legitimately-named processes (rootkits, renamed tools) that
+// already have an established connection — name-based detection misses these.
+const LOCAL_PREFIXES = ['127.','0.0.0.0','::1','fe80','169.254.','[::','[:'];
+
+async function killExistingRemoteConnections() {
+  if (process.platform !== 'win32') return; // pfctl handles macOS
+
+  const examIPList = [..._serverIPs].map(ip => `"${ip}"`).join(',');
+
+  // Close existing connections using Remove-NetTCPConnection (doesn't kill the process)
+  // then kill processes that still have remote connections open
+  const script = `
+    $examIPs   = @(${examIPList})
+    $localPre  = @("127.","0.0.0.0","::1","fe80","169.254.")
+    $systemPIDs= @(0,4,8)
+
+    function IsLocal($ip) {
+      foreach ($p in $localPre) { if ($ip.StartsWith($p)) { return $true } }
+      return $false
+    }
+    function IsExam($ip) { return ($examIPs -contains $ip) }
+
+    # Step 1: close TCP connections cleanly
+    try {
+      Get-NetTCPConnection -State Established -ErrorAction SilentlyContinue |
+        Where-Object {
+          -not (IsLocal $_.RemoteAddress) -and
+          -not (IsExam  $_.RemoteAddress)
+        } | ForEach-Object {
+          Write-Host "Closing connection to $($_.RemoteAddress):$($_.RemotePort) (PID $($_.OwningProcess))"
+          $_ | Remove-NetTCPConnection -ErrorAction SilentlyContinue
+        }
+    } catch {}
+
+    Start-Sleep -Milliseconds 800
+
+    # Step 2: find processes still with remote connections and stop them
+    # For svchost.exe: stop the service inside it rather than the whole process
+    try {
+      Get-NetTCPConnection -State Established -ErrorAction SilentlyContinue |
+        Where-Object {
+          -not (IsLocal $_.RemoteAddress) -and
+          -not (IsExam  $_.RemoteAddress)
+        } | ForEach-Object {
+          $pid = $_.OwningProcess
+          if ($systemPIDs -contains $pid) { return }
+
+          $proc = Get-Process -Id $pid -ErrorAction SilentlyContinue
+          if (-not $proc) { return }
+
+          $name = $proc.ProcessName.ToLower()
+          Write-Host "Remote connection on PID $pid ($name) -> $($_.RemoteAddress)"
+
+          if ($name -eq "svchost") {
+            # Stop services hosted by this svchost instance (safer than killing svchost)
+            $services = Get-WmiObject Win32_Service -ErrorAction SilentlyContinue |
+              Where-Object { $_.ProcessId -eq $pid -and $_.State -eq "Running" }
+            foreach ($svc in $services) {
+              Write-Host "  Stopping service: $($svc.Name)"
+              Stop-Service -Name $svc.Name -Force -ErrorAction SilentlyContinue
+              Set-Service -Name $svc.Name -StartupType Disabled -ErrorAction SilentlyContinue
+            }
+          } else {
+            Stop-Process -Id $pid -Force -ErrorAction SilentlyContinue
+          }
+        }
+    } catch {}
+  `;
 
   try {
-    // 1. Save current DefaultOutboundAction for each profile so we can restore it
-    const orig = await ps(
-      'Get-NetFirewallProfile | Select-Object Name,DefaultOutboundAction | ConvertTo-Json -Compress'
-    );
-    fs.writeFileSync(ORIG_FW_FILE, orig.stdout.trim());
+    const result = await ps(script);
+    if (result.stdout.trim()) console.log('[network] Kill remote connections:\n', result.stdout.trim());
+  } catch (e) { console.warn('[network] Kill connections error:', e.message); }
+}
 
-    // 2. Clean up any leftover Alaric rules from a previous session
+// ─── 3. Windows firewall lockdown ─────────────────────────────────────────────
+async function applyWindowsRules() {
+  if (!_serverIPs.size) return;
+  try {
+    // Save original DefaultOutboundAction
+    const origRaw = await ps('Get-NetFirewallProfile | Select-Object Name,DefaultOutboundAction | ConvertTo-Json -Compress');
+    fs.writeFileSync(ORIG_FW_FILE, origRaw.stdout.trim());
+
+    // Remove any leftover Alaric rules
     await ps(`Get-NetFirewallRule -DisplayName "${RULE_PREFIX}*" -ErrorAction SilentlyContinue | Remove-NetFirewallRule`).catch(() => {});
 
-    // 3. Set DefaultOutboundAction = Block on ALL profiles
-    //    Explicit Allow rules (added next) always override the default → no conflict
+    // Set default outbound = Block (explicit Allow rules win over this)
     await ps('Set-NetFirewallProfile -All -DefaultOutboundAction Block');
 
-    // 4. Allow exam server (TCP + UDP for WebRTC media)
     const ips = [..._serverIPs].join('","');
-    await ps(`New-NetFirewallRule -DisplayName "${RULE_PREFIX}Server" -Direction Outbound -Action Allow -Protocol TCP -RemoteAddress "${ips}" -ErrorAction Stop`);
+
+    // Allow exam server (TCP + UDP for WebRTC)
+    await ps(`New-NetFirewallRule -DisplayName "${RULE_PREFIX}ServerTCP" -Direction Outbound -Action Allow -Protocol TCP -RemoteAddress "${ips}"`);
     await ps(`New-NetFirewallRule -DisplayName "${RULE_PREFIX}ServerUDP" -Direction Outbound -Action Allow -Protocol UDP -RemoteAddress "${ips}"`);
 
-    // 5. Allow DNS (UDP + TCP port 53)
-    await ps(`New-NetFirewallRule -DisplayName "${RULE_PREFIX}DNS" -Direction Outbound -Action Allow -Protocol UDP -RemotePort 53`);
-    await ps(`New-NetFirewallRule -DisplayName "${RULE_PREFIX}DNSTCP" -Direction Outbound -Action Allow -Protocol TCP -RemotePort 53`);
-
-    // 6. Allow loopback (Electron IPC uses localhost)
-    await ps(`New-NetFirewallRule -DisplayName "${RULE_PREFIX}Loopback" -Direction Outbound -Action Allow -Protocol Any -RemoteAddress "127.0.0.1","::1","0.0.0.0"`);
-
-    // 7. Allow DHCP (UDP 67/68) and NTP (UDP 123) — needed for network stack
+    // Allow DNS, DHCP, NTP (needed for network stack)
+    await ps(`New-NetFirewallRule -DisplayName "${RULE_PREFIX}DNS"  -Direction Outbound -Action Allow -Protocol UDP -RemotePort 53`);
     await ps(`New-NetFirewallRule -DisplayName "${RULE_PREFIX}DHCP" -Direction Outbound -Action Allow -Protocol UDP -RemotePort 67,68,123`);
 
-    // 8. Block all inbound (belt-and-suspenders: prevents remote connections TO this machine)
-    await ps(`New-NetFirewallRule -DisplayName "${RULE_PREFIX}BlockIn" -Direction Inbound -Action Block -Protocol Any`).catch(() => {});
-    // Allow inbound from exam server (WebRTC answers, admin commands)
-    await ps(`New-NetFirewallRule -DisplayName "${RULE_PREFIX}AllowIn" -Direction Inbound -Action Allow -Protocol Any -RemoteAddress "${ips}"`).catch(() => {});
+    // Allow loopback (Electron IPC uses localhost)
+    await ps(`New-NetFirewallRule -DisplayName "${RULE_PREFIX}Loop" -Direction Outbound -Action Allow -Protocol Any -RemoteAddress "127.0.0.1","::1"`);
+
+    // Block all inbound (default Windows allows established inbound)
+    await ps(`New-NetFirewallRule -DisplayName "${RULE_PREFIX}BlockIn" -Direction Inbound -Action Block -Protocol Any`);
+    // Allow inbound from exam server (WebRTC answers, WS monitor)
+    await ps(`New-NetFirewallRule -DisplayName "${RULE_PREFIX}AllowIn" -Direction Inbound -Action Allow -Protocol Any -RemoteAddress "${ips}"`);
 
     _rulesApplied = true;
-    console.log('[network] Windows firewall lockdown applied — only exam server allowed');
+    console.log('[network] Windows firewall lockdown applied');
   } catch (e) {
-    console.error('[network] Windows firewall error:', e.message);
-    // On failure try to clean up so machine isn't left broken
+    console.error('[network] Firewall apply error:', e.message);
     await restoreWindowsRules().catch(() => {});
   }
 }
 
 async function restoreWindowsRules() {
-  const ps = (cmd) =>
-    execAsync(`powershell -NoProfile -NonInteractive -Command "${cmd}"`, { timeout: 12000 });
-
-  // Remove all AlaricExam rules
   await ps(`Get-NetFirewallRule -DisplayName "${RULE_PREFIX}*" -ErrorAction SilentlyContinue | Remove-NetFirewallRule`).catch(() => {});
-
-  // Restore original DefaultOutboundAction
   if (fs.existsSync(ORIG_FW_FILE)) {
     try {
       const orig = JSON.parse(fs.readFileSync(ORIG_FW_FILE, 'utf8'));
@@ -110,62 +269,38 @@ async function restoreWindowsRules() {
   console.log('[network] Windows firewall restored');
 }
 
-// ─── macOS pfctl ──────────────────────────────────────────────────────────────
+// ─── 4. macOS pfctl lockdown ──────────────────────────────────────────────────
 async function applyMacRules() {
   if (!_serverIPs.size) return;
   const ips = [..._serverIPs];
-
-  // pfctl: rules are evaluated top-to-bottom; 'quick' stops processing on first match
   const rules = [
     '# Alaric Exam Network Guard',
-    'set skip on lo0',           // loopback always passes
+    'set skip on lo0',
     '',
-    '# Allow exam server (TCP + UDP for WebRTC)',
+    '# Allow exam server',
     ...ips.map(ip => `pass out quick inet proto tcp to ${ip}/32 keep state`),
     ...ips.map(ip => `pass out quick inet proto udp to ${ip}/32 keep state`),
     ...ips.map(ip => `pass in  quick inet from ${ip}/32 keep state`),
     '',
-    '# Allow DNS and DHCP',
+    '# Allow DNS, DHCP, NTP',
     'pass out quick proto udp to port 53  keep state',
-    'pass out quick proto udp to port 123 keep state',   // NTP
-    'pass out quick proto udp to port 67  keep state',   // DHCP
+    'pass out quick proto udp to port 123 keep state',
+    'pass out quick proto udp to port 67  keep state',
     '',
-    '# Block everything else',
+    '# Block all else (both directions)',
     'block out all',
     'block in  all',
   ].join('\n') + '\n';
 
   try {
     fs.writeFileSync(PF_ANCHOR, rules, 'utf8');
-    // Save original pf state and load our rules
     await execAsync(`pfctl -e -f "${PF_ANCHOR}" 2>/dev/null || sudo pfctl -e -f "${PF_ANCHOR}"`, { timeout: 10000 });
     _rulesApplied = true;
     console.log('[network] macOS pfctl lockdown applied');
-  } catch (e) {
-    console.warn('[network] pfctl error:', e.message);
-  }
+  } catch (e) { console.warn('[network] pfctl error:', e.message); }
 }
 
-async function restoreMacRules() {
-  try {
-    await execAsync('pfctl -d 2>/dev/null || sudo pfctl -d', { timeout: 8000 }).catch(() => {});
-    if (fs.existsSync(PF_ANCHOR)) fs.unlinkSync(PF_ANCHOR);
-    console.log('[network] macOS pfctl restored');
-  } catch (e) {
-    console.warn('[network] pfctl restore error:', e.message);
-  }
-}
-
-// ─── Restore ──────────────────────────────────────────────────────────────────
-async function restore() {
-  if (process.platform === 'win32')       await restoreWindowsRules();
-  else if (process.platform === 'darwin') await restoreMacRules();
-  _rulesApplied = false;
-}
-
-// ─── Connection scanner ───────────────────────────────────────────────────────
-const LOCAL_PREFIXES = ['127.','10.','192.168.','172.','::1','fe80','0.0.0.0'];
-
+// ─── 5. Connection scanner (5-second poll) ────────────────────────────────────
 async function scanConnections() {
   if (!_callback) return;
   try {
@@ -181,7 +316,6 @@ async function scanConnections() {
     const suspicious = [];
     for (const line of lines) {
       const parts = line.trim().split(/\s+/);
-      // remote address is column 3 (netstat) or 4 (ss)
       const remote = parts[2] || parts[3] || '';
       const ip = remote.split(':')[0].replace(/[\[\]]/g, '');
       if (!ip || LOCAL_PREFIXES.some(p => ip.startsWith(p))) continue;
@@ -189,13 +323,14 @@ async function scanConnections() {
       suspicious.push(remote);
     }
 
-    if (suspicious.length > 0 && _callback) {
+    if (suspicious.length > 0) {
+      // Auto-kill the suspicious connection process too
+      await killExistingRemoteConnections();
       _callback({
-        type:        'suspicious_connection',
-        severity:    'critical',
-        message:     `Connection to non-exam host detected: ${suspicious.slice(0,3).join(', ')}`,
-        connections: suspicious,
-        timestamp:   Date.now(),
+        type:     'suspicious_connection',
+        severity: 'critical',
+        message:  `Connection to non-exam host detected and terminated: ${suspicious.slice(0,3).join(', ')}`,
+        timestamp: Date.now(),
       });
     }
   } catch {}
@@ -205,19 +340,39 @@ async function scanConnections() {
 async function start(examServerHost, callback) {
   _callback = callback;
   _serverIPs.clear();
-
   await resolveHost(examServerHost);
 
+  // Layer 1: disable all remote access protocols at OS level
+  await disableRemoteProtocols();
+
+  // Layer 2: firewall rules
   if      (process.platform === 'win32')  await applyWindowsRules();
   else if (process.platform === 'darwin') await applyMacRules();
 
-  // Scan every 5 seconds for unexpected outbound connections
+  // Layer 3: kill any already-established remote connections (including rootkits)
+  await killExistingRemoteConnections();
+
+  // Poll every 5s — kills anything that re-establishes
   _interval = setInterval(scanConnections, 5000);
 }
 
 function stop() {
   if (_interval) { clearInterval(_interval); _interval = null; }
   _callback = null;
+}
+
+async function restore() {
+  stop();
+  if (process.platform === 'win32') {
+    await restoreWindowsRules();
+  } else if (process.platform === 'darwin') {
+    try {
+      await execAsync('pfctl -d 2>/dev/null || sudo pfctl -d', { timeout: 8000 }).catch(() => {});
+      if (fs.existsSync(PF_ANCHOR)) fs.unlinkSync(PF_ANCHOR);
+    } catch {}
+  }
+  await restoreRemoteProtocols();
+  _rulesApplied = false;
 }
 
 module.exports = { start, stop, restore };
