@@ -88,6 +88,59 @@ function sendDeepLink(url) {
   launcherWin.focus();
 }
 
+// ─── Display management ───────────────────────────────────────────────────────
+let _displayAddedHandler = null;
+
+async function switchToInternalDisplay() {
+  if (process.platform !== 'win32') return false;
+  try {
+    // Primary method: DisplaySwitch.exe — built-in on every Windows install
+    await execAsync('DisplaySwitch.exe /internal', { timeout: 10000 });
+    await new Promise(r => setTimeout(r, 2500)); // Windows needs ~2s to apply
+    return true;
+  } catch {
+    try {
+      // Fallback: SetDisplayConfig Win32 API via PowerShell
+      // Flags: SDC_TOPOLOGY_INTERNAL(1) | SDC_APPLY(0x80) = 0x81
+      await execAsync(
+        `powershell -NoProfile -NonInteractive -Command "` +
+        `Add-Type -TypeDefinition 'using System;using System.Runtime.InteropServices;` +
+        `public class D{[DllImport(\\"user32.dll\\")]public static extern int SetDisplayConfig(uint p,IntPtr pa,uint m,IntPtr ma,uint f);}' ` +
+        `-PassThru 2>$null | Out-Null; [D]::SetDisplayConfig(0,[IntPtr]::Zero,0,[IntPtr]::Zero,0x81)"`,
+        { timeout: 10000 }
+      );
+      await new Promise(r => setTimeout(r, 2500));
+      return true;
+    } catch { return false; }
+  }
+}
+
+function startDisplayWatcher() {
+  if (_displayAddedHandler) return; // already watching
+  _displayAddedHandler = async () => {
+    if (!isExamLive) return;
+    // A monitor was connected mid-exam — auto-disconnect it
+    const fixed = await switchToInternalDisplay();
+    if (examWin && !examWin.isDestroyed()) {
+      examWin.webContents.send('security-event', {
+        type:     'multi_monitor',
+        message:  fixed
+          ? 'External display connected mid-exam — auto-disconnected'
+          : 'External display detected — please disconnect it to continue',
+        severity: 'critical',
+      });
+    }
+  };
+  screen.on('display-added', _displayAddedHandler);
+}
+
+function stopDisplayWatcher() {
+  if (_displayAddedHandler) {
+    screen.off('display-added', _displayAddedHandler);
+    _displayAddedHandler = null;
+  }
+}
+
 // ─── Window creators ──────────────────────────────────────────────────────────
 function createLauncher() {
   launcherWin = new BrowserWindow({
@@ -217,7 +270,7 @@ function createExamWindow(examUrl) {
     isExamLive = false;
     stopSecurity();
     machineCheck.stopWatchdog();
-    // Restore original startup types for any services we disabled during exam
+    stopDisplayWatcher();
     machineCheck.restoreServices().catch(() => {});
     networkMonitor.restore().finally(() => app.quit());
   });
@@ -283,6 +336,11 @@ ipcMain.handle('open-external', (_, url) => shell.openExternal(url));
 
 ipcMain.handle('get-app-version', () => app.getVersion());
 
+ipcMain.handle('fix-multi-monitor', async () => {
+  const ok = await switchToInternalDisplay();
+  return { ok, displayCount: screen.getAllDisplays().length };
+});
+
 ipcMain.handle('check-for-update', () => {
   if (app.isPackaged) autoUpdater.checkForUpdates().catch(() => {});
 });
@@ -307,10 +365,10 @@ ipcMain.handle('get-screen-source', async () => {
 
 ipcMain.handle('start-exam', async (_, { examUrl, examServerHost }) => {
   startSecurity(examServerHost);
-  // Start service/process watchdog — auto-kills anything that restarts during exam
   machineCheck.startWatchdog((ev) => {
     if (examWin && !examWin.isDestroyed()) examWin.webContents.send('security-event', ev);
   });
+  startDisplayWatcher(); // auto-disconnect any monitor plugged in mid-exam
   if (launcherWin) launcherWin.hide();
   createExamWindow(examUrl);
   return { success: true };

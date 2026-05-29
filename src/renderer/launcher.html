@@ -569,9 +569,48 @@ async function runChecks() {
 
   const results = {};
 
-  results.displays = displayCount === 1
-    ? { pass: true, msg: '1 display detected' }
-    : { pass: false, msg: `${displayCount} displays detected`, fix: 'Disconnect all external monitors and re-run checks' };
+  if (displayCount === 1) {
+    results.displays = { pass: true, msg: '1 display — single monitor confirmed' };
+  } else {
+    // Multiple monitors detected — show auto-fixing status immediately
+    const dispItem = document.getElementById(`chk-displays`);
+    const dispIcon = document.getElementById(`ci-displays`);
+    const dispMsg  = document.getElementById(`cm-displays`);
+    if (dispIcon) { dispIcon.className = 'check-icon loading'; dispIcon.textContent = '⟳'; }
+    if (dispMsg)  dispMsg.textContent = `${displayCount} displays found — auto-disconnecting extras…`;
+
+    let fixResult = { ok: false };
+    if (API?.fixMultiMonitor) {
+      fixResult = await API.fixMultiMonitor().catch(() => ({ ok: false }));
+    }
+
+    if (fixResult.ok) {
+      // Re-read count after DisplaySwitch applied (Electron screen API updates async)
+      const newCount = await API.getDisplayCount().catch(() => displayCount);
+      if (newCount === 1) {
+        results.displays = { pass: true, msg: 'Extra display auto-disconnected — single monitor active', fixed: true };
+      } else {
+        results.displays = {
+          pass: false,
+          msg:  `${newCount} display${newCount > 1 ? 's' : ''} still active after auto-fix`,
+          fix:  'Unplug all external monitors physically and re-run checks',
+        };
+      }
+    } else if (process.platform === 'win32') {
+      results.displays = {
+        pass: false,
+        msg:  `${displayCount} displays detected — could not auto-disconnect`,
+        fix:  'Win + P → "PC screen only", or unplug external monitors',
+      };
+    } else {
+      // macOS: no reliable programmatic fix without code-signing
+      results.displays = {
+        pass: false,
+        msg:  `${displayCount} displays detected`,
+        fix:  'System Settings → Displays → select second display → Use As → Mirror display',
+      };
+    }
+  }
 
   results.antivirus  = osResults.antivirus      || { pass: true, msg: 'N/A', na: true };
   results.firewall   = osResults.firewall       || { pass: true, msg: 'N/A', na: true };
