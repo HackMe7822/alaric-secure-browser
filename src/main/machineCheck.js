@@ -57,8 +57,11 @@ const BLACKLISTED = [
   'greenshot',
   'screenpresso',
 
-  // Browsers removed from auto-kill list — Edge/Arc are system processes that
-  // resist killing. Instead, checkBrowsers() detects them and asks user to close.
+  // ── Browsers — kill the process only, don't touch their update services ──────
+  'chrome','googlechrome',          // Chrome: auto-kill fine
+  'firefox','firefoxdeveloperedi',  // Firefox: auto-kill fine
+  'msedge',                         // Edge: kill the browser window only (service not disabled)
+  'opera','brave','vivaldi',        // Other browsers
 
   // ── RMM / endpoint management tools (can be used for remote access) ──────
   // NinjaRMM
@@ -275,11 +278,10 @@ async function checkFirewall(autoFix = true) {
 // Edge is a system-integrated browser on Windows 11 that resists force-kill.
 // Arc.exe is the Intel Arc GPU driver. Neither should be auto-killed.
 // We just detect and ask the user to close browsers manually.
-const BROWSER_NAMES = [
-  'msedge','microsoftedge','chrome','googlechrome',
-  'firefox','firefoxdeveloperedi','opera','brave',
-  'safari','vivaldi','iexplore','arc',
-];
+// checkBrowsers() is now a fallback for anything the auto-kill missed
+// (browsers already in BLACKLISTED above are killed before this check runs)
+const BROWSER_NAMES = ['msedge','microsoftedge','chrome','googlechrome',
+  'firefox','firefoxdeveloperedi','opera','brave','safari','vivaldi','iexplore'];
 
 async function checkBrowsers() {
   try {
@@ -335,10 +337,8 @@ const PROCESS_TO_SERVICE = {
   'supremo':         ['SupremoService'],
   'dwagent':         ['dwservice'],
   'parsec':          ['Parsec'],
-  // Browsers — disable update service so browser can't auto-restart
-  'msedge':          ['edgeupdate', 'edgeupdatem'],
-  'microsoftedge':   ['edgeupdate', 'edgeupdatem'],
-  'chrome':          ['GoogleChromeElevationService'],
+  // Note: browsers NOT in PROCESS_TO_SERVICE — we only kill the window,
+  // not the update services (disabling edgeupdate caused Edge to behave weirdly)
   // RMM agents with watchdog services — must disable service or process restarts immediately
   'ninjarmm':        ['NinjaRMMAgent', 'ninjarmm', 'NinjaRMM'],
   'ninjaone':        ['NinjaRMMAgent', 'ninjarmm'],
