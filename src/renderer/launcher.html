@@ -377,6 +377,12 @@ nav{background:var(--nav-bg);color:var(--nav-text);display:flex;align-items:cent
             </div>
           </div>
 
+          <!-- Submitted banner — shown when proctor is reviewing -->
+          <div id="verify-submitted-banner" style="display:none;margin-top:12px;background:#eff6ff;border:2px solid #bfdbfe;border-radius:10px;padding:12px 16px">
+            <div style="font-size:13px;font-weight:700;color:#1d4ed8;margin-bottom:6px">📸 Photos received — proctor is reviewing</div>
+            <div style="font-size:12px;color:#475569;line-height:1.6">Your ID and desk photos have been submitted. Your proctor is reviewing them now. Stay in this window — the camera feed and chat remain active. The exam will start once your proctor approves.</div>
+          </div>
+
           <!-- Photo checklist -->
           <div id="verify-photo-status" style="display:none;margin-top:14px;padding-top:14px;border-top:1px solid #e2e8f0">
             <div style="font-size:11px;font-weight:700;color:#64748b;margin-bottom:8px">PHOTO CHECKLIST</div>
@@ -885,20 +891,27 @@ function updateVerifyStatus(status, photos) {
   const pList = document.getElementById('verify-photo-list');
   const pPanel= document.getElementById('verify-photo-status');
 
+  const submitBanner = document.getElementById('verify-submitted-banner');
+
   if (status === 'approved') {
     badge.style.background = '#f0fdf4'; badge.style.color = '#15803d';
     badge.textContent = '✅ Approved';
+    if (submitBanner) submitBanner.style.display = 'none';
     clearInterval(_verifyPollTmr);
   } else if (status === 'photos_submitted') {
     badge.style.background = '#eff6ff'; badge.style.color = '#1d4ed8';
     badge.textContent = '📋 Under Review';
+    // Show prominent banner so candidate knows what's happening
+    if (submitBanner) submitBanner.style.display = '';
   } else if (status === 'rejected') {
     badge.style.background = '#fef2f2'; badge.style.color = '#dc2626';
     badge.textContent = '❌ Rejected';
+    if (submitBanner) submitBanner.style.display = 'none';
     clearInterval(_verifyPollTmr);
   } else {
     badge.style.background = '#fff3cd'; badge.style.color = '#92400e';
     badge.textContent = 'Pending';
+    if (submitBanner) submitBanner.style.display = 'none';
   }
 
   if (photos && Object.keys(photos).length) {
