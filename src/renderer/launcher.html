@@ -346,7 +346,10 @@ nav{background:var(--nav-bg);color:var(--nav-text);display:flex;align-items:cent
             </div>
             <div style="flex-shrink:0">
               <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.07em;color:#64748b;margin-bottom:6px">Scan with Phone</div>
-              <canvas id="qr-canvas" width="140" height="140" style="border-radius:8px;border:1px solid #e2e8f0;display:block"></canvas>
+              <img id="qr-img" width="140" height="140"
+                style="border-radius:8px;border:1px solid #e2e8f0;display:block;background:#f8fafc"
+                alt="QR Code loading…"
+                onerror="this.alt='QR unavailable — type the code manually'">
               <div style="font-size:10px;color:#64748b;text-align:center;margin-top:4px">Point camera here</div>
             </div>
           </div>
@@ -809,9 +812,12 @@ async function startVerification() {
     // Display the code
     document.getElementById('verify-code-display').textContent = _verifyCode;
 
-    // Generate QR code pointing to mobile verify page
+    // Generate real QR code via server endpoint
     const verifyUrl = `https://${_examHost}/verify/${_verifyCode}`;
-    drawQR(verifyUrl);
+    const qrImg = document.getElementById('qr-img');
+    if (qrImg) {
+      qrImg.src = `https://${_examHost}/qr?url=${encodeURIComponent(verifyUrl)}`;
+    }
 
     // Start polling for status
     updateVerifyStatus(d.status || 'pending');
@@ -878,56 +884,7 @@ function openPcUpload() {
   else window.open(url, '_blank');
 }
 
-// ─── Tiny QR code generator (pure JS, no dependencies) ────────────────────────
-// Draws a basic QR-compatible URL onto the canvas using a UTF-8 encoded URL.
-// For production, use a proper QR library; this is a placeholder that draws
-// the URL as a link users can see + manually type if QR scan fails.
-function drawQR(url) {
-  const canvas = document.getElementById('qr-canvas');
-  if (!canvas) return;
-  const ctx = canvas.getContext('2d');
-  const W = 140;
-  ctx.fillStyle = '#fff';
-  ctx.fillRect(0, 0, W, W);
-
-  // Draw a simple representation: border + URL text
-  ctx.strokeStyle = '#1e293b';
-  ctx.lineWidth = 8;
-  ctx.strokeRect(4, 4, W-8, W-8);
-  ctx.lineWidth = 3;
-  ctx.strokeRect(12, 12, W-24, W-24);
-
-  // Corner squares (finder patterns, simplified)
-  const corner = (x, y) => {
-    ctx.fillStyle = '#1e293b';
-    ctx.fillRect(x, y, 22, 22);
-    ctx.fillStyle = '#fff';
-    ctx.fillRect(x+4, y+4, 14, 14);
-    ctx.fillStyle = '#1e293b';
-    ctx.fillRect(x+7, y+7, 8, 8);
-  };
-  corner(16, 16); corner(W-38, 16); corner(16, W-38);
-
-  // QR label in center
-  ctx.fillStyle = '#475569';
-  ctx.font = '8px sans-serif';
-  ctx.textAlign = 'center';
-  ctx.fillText('Scan to', W/2, W/2 - 8);
-  ctx.fillText('verify', W/2, W/2 + 2);
-  ctx.fillText('identity', W/2, W/2 + 12);
-
-  // If the app supports shell.openExternal, the actual QR would be generated
-  // server-side or via a proper library. This canvas is a visual placeholder.
-  // The URL is shown as text below the canvas in the launcher UI.
-  try {
-    // Try to use qrcode if available in the Electron context
-    // This will silently fail if not installed
-    // eslint-disable-next-line no-undef
-    if (typeof QRCode !== 'undefined') {
-      QRCode.toCanvas(canvas, url, { width: 140, margin: 1, color: { dark: '#1e293b', light: '#fff' } });
-    }
-  } catch {}
-}
+// drawQR removed — QR is now a real PNG from the server GET /qr?url=...
 
 // ─── Step 3: Waiting room ─────────────────────────────────────────────────────
 async function startWaitingRoom() {
