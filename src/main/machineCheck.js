@@ -57,11 +57,9 @@ const BLACKLISTED = [
   'greenshot',
   'screenpresso',
 
-  // ── Browsers — kill the process only, don't touch their update services ──────
-  'chrome','googlechrome',          // Chrome: auto-kill fine
-  'firefox','firefoxdeveloperedi',  // Firefox: auto-kill fine
-  'msedge',                         // Edge: kill the browser window only (service not disabled)
-  'opera','brave','vivaldi',        // Other browsers
+  // ── Browsers — handled by checkBrowsers() via CloseMainWindow() ─────────────
+  // msedge removed: system process, use CloseMainWindow() not force-kill
+  // Chrome/Firefox/etc: also handled by checkBrowsers() for consistency
 
   // ── RMM / endpoint management tools (can be used for remote access) ──────
   // NinjaRMM
@@ -278,31 +276,58 @@ async function checkFirewall(autoFix = true) {
 // Edge is a system-integrated browser on Windows 11 that resists force-kill.
 // Arc.exe is the Intel Arc GPU driver. Neither should be auto-killed.
 // We just detect and ask the user to close browsers manually.
-// checkBrowsers() is now a fallback for anything the auto-kill missed
-// (browsers already in BLACKLISTED above are killed before this check runs)
-const BROWSER_NAMES = ['msedge','microsoftedge','chrome','googlechrome',
-  'firefox','firefoxdeveloperedi','opera','brave','safari','vivaldi','iexplore'];
-
-async function checkBrowsers() {
+async function checkBrowsers(autoFix = true) {
   try {
-    let list = [];
-    if (process.platform === 'win32') {
-      const { stdout } = await execAsync('tasklist /fo csv /nh', { timeout: 8000 });
-      list = stdout.split('\n')
-        .map(l => l.replace(/"/g,'').toLowerCase().split(',')[0].replace('.exe','').trim())
-        .filter(Boolean);
-    } else {
-      const { stdout } = await execAsync('ps -ax -o comm=', { timeout: 8000 });
-      list = stdout.split('\n')
-        .map(l => require('path').basename(l.trim()).toLowerCase().replace('.exe',''))
-        .filter(Boolean);
+    if (process.platform !== 'win32') return { pass: true, msg: 'N/A', na: true };
+
+    // Check for browser windows with visible titles (not just background processes)
+    // Edge cannot be force-killed (system process) — close windows gracefully instead
+    const windowScript = `
+$browsers = @('msedge','chrome','firefox','opera','brave','vivaldi','iexplore')
+$open = @()
+foreach ($b in $browsers) {
+  $procs = Get-Process -Name $b -ErrorAction SilentlyContinue |
+           Where-Object { $_.MainWindowTitle -ne '' }
+  if ($procs) { $open += $b }
+}
+$open -join ','
+`;
+    const raw = await psBig(windowScript).catch(() => ({ stdout: '' }));
+    const openBrowsers = (raw.stdout || '').trim().split(',').map(s => s.trim()).filter(Boolean);
+
+    if (!openBrowsers.length) return { pass: true, msg: 'No browser windows open' };
+
+    if (autoFix) {
+      // Close browser WINDOWS gracefully (CloseMainWindow = same as clicking X)
+      // This works for Edge without needing to kill the system process
+      const closeScript = `
+$browsers = @('msedge','chrome','firefox','opera','brave','vivaldi','iexplore')
+foreach ($b in $browsers) {
+  Get-Process -Name $b -ErrorAction SilentlyContinue |
+    Where-Object { $_.MainWindowTitle -ne '' } |
+    ForEach-Object { try { $_.CloseMainWindow() | Out-Null } catch {} }
+}
+Start-Sleep -Milliseconds 2000
+`;
+      await psBig(closeScript).catch(() => {});
+
+      // Re-check for visible windows
+      const recheck = await psBig(windowScript).catch(() => ({ stdout: '' }));
+      const stillOpen = (recheck.stdout || '').trim().split(',').map(s => s.trim()).filter(Boolean);
+      if (!stillOpen.length) {
+        return { pass: true, msg: `Browser windows closed: ${openBrowsers.join(', ')}`, fixed: true };
+      }
+      return {
+        pass: false,
+        msg:  `Browser still open: ${stillOpen.join(', ')}`,
+        fix:  'Close all browser windows manually and click Re-run Checks',
+      };
     }
-    const found = [...new Set(BROWSER_NAMES.filter(b => list.some(p => p === b || p.startsWith(b))))];
-    if (!found.length) return { pass: true, msg: 'No browsers open' };
+
     return {
       pass: false,
-      msg:  `Browser open: ${found.join(', ')}`,
-      fix:  'Close all browser windows, then click Re-run Checks',
+      msg:  `Browser window open: ${openBrowsers.join(', ')}`,
+      fix:  'Close all browser windows and click Re-run Checks',
     };
   } catch { return { pass: true, msg: 'Browser check skipped', na: true }; }
 }
@@ -675,7 +700,7 @@ async function runAll(config = {}) {
     on('firewall')  ? checkFirewall(autoFix)       : Promise.resolve(NA),
     on('vm')        ? checkVirtualMachine()        : Promise.resolve(NA),
     on('remote')    ? checkRemoteSession(autoFix)  : Promise.resolve(NA),
-    checkBrowsers(),                               // always run browser check
+    checkBrowsers(autoFix),                        // close browser windows via CloseMainWindow()
   ]);
   const r = x => x.status === 'fulfilled' ? x.value : { pass: false, msg: x.reason?.message || 'Check failed' };
 
