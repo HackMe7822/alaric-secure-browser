@@ -257,30 +257,41 @@ let _displayWasExtended  = false; // true if machine had multiple monitors befor
 
 async function switchToInternalDisplay() {
   if (process.platform !== 'win32') return false;
-  // Record original mode before switching (so we can restore on release)
   if (!_displayWasExtended) {
     _displayWasExtended = screen.getAllDisplays().length > 1;
   }
+
+  // Helper: poll until displayCount drops to 1 or timeout (8s)
+  const waitForSingleDisplay = async () => {
+    const deadline = Date.now() + 8000;
+    while (Date.now() < deadline) {
+      await new Promise(r => setTimeout(r, 600));
+      if (screen.getAllDisplays().length <= 1) return true;
+    }
+    return screen.getAllDisplays().length <= 1;
+  };
+
   try {
-    // Primary method: DisplaySwitch.exe — built-in on every Windows install
+    // Primary method: DisplaySwitch.exe /internal (built-in on all Windows)
     await execAsync('DisplaySwitch.exe /internal', { timeout: 10000 });
-    await new Promise(r => setTimeout(r, 2500)); // Windows needs ~2s to apply
-    return true;
-  } catch {
-    try {
-      // Fallback: SetDisplayConfig Win32 API via PowerShell
-      // Flags: SDC_TOPOLOGY_INTERNAL(1) | SDC_APPLY(0x80) = 0x81
-      await execAsync(
-        `powershell -NoProfile -NonInteractive -Command "` +
-        `Add-Type -TypeDefinition 'using System;using System.Runtime.InteropServices;` +
-        `public class D{[DllImport(\\"user32.dll\\")]public static extern int SetDisplayConfig(uint p,IntPtr pa,uint m,IntPtr ma,uint f);}' ` +
-        `-PassThru 2>$null | Out-Null; [D]::SetDisplayConfig(0,[IntPtr]::Zero,0,[IntPtr]::Zero,0x81)"`,
-        { timeout: 10000 }
-      );
-      await new Promise(r => setTimeout(r, 2500));
-      return true;
-    } catch { return false; }
-  }
+    const ok = await waitForSingleDisplay();
+    if (ok) return true;
+  } catch {}
+
+  try {
+    // Fallback: SetDisplayConfig Win32 API — SDC_TOPOLOGY_INTERNAL(1)|SDC_APPLY(0x80)=0x81
+    await execAsync(
+      `powershell -NoProfile -NonInteractive -Command "` +
+      `Add-Type -TypeDefinition 'using System;using System.Runtime.InteropServices;` +
+      `public class D{[DllImport(\\"user32.dll\\")]public static extern int SetDisplayConfig(uint p,IntPtr pa,uint m,IntPtr ma,uint f);}' ` +
+      `-PassThru 2>$null | Out-Null; [D]::SetDisplayConfig(0,[IntPtr]::Zero,0,[IntPtr]::Zero,0x81)"`,
+      { timeout: 10000 }
+    );
+    const ok = await waitForSingleDisplay();
+    if (ok) return true;
+  } catch {}
+
+  return false;
 }
 
 function startDisplayWatcher() {

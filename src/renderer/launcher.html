@@ -599,6 +599,7 @@ async function grantPerm(key) {
 // ─── Step 2: Machine checks ───────────────────────────────────────────────────
 // All possible checks — filtered at runtime by _precheckConfig
 const ALL_CHECK_DEFS = [
+  { id: 'admin',     label: 'Administrator Rights',     critical: true, cfgKey: null        }, // always checked
   { id: 'displays',  label: 'Single Monitor',           critical: true, cfgKey: 'displays'  },
   { id: 'antivirus', label: 'Antivirus / EDR Active',   critical: true, cfgKey: 'antivirus' },
   { id: 'firewall',  label: 'Firewall Enabled',          critical: true, cfgKey: 'firewall'  },
@@ -678,8 +679,9 @@ async function runChecks() {
     }
 
     if (fixResult.ok) {
-      // Re-read count after DisplaySwitch applied (Electron screen API updates async)
-      const newCount = await API.getDisplayCount().catch(() => displayCount);
+      // IPC already polled up to 8s waiting for display count to drop.
+      // fixResult.displayCount already reflects the updated count.
+      const newCount = fixResult.displayCount ?? await API.getDisplayCount().catch(() => displayCount);
       if (newCount === 1) {
         results.displays = { pass: true, msg: 'Extra display auto-disconnected — single monitor active', fixed: true };
       } else {
@@ -704,6 +706,7 @@ async function runChecks() {
     }
   }
 
+  results.admin      = osResults.adminRights    || { pass: true, msg: 'N/A', na: true };
   results.antivirus  = osResults.antivirus      || { pass: true, msg: 'N/A', na: true };
   results.firewall   = osResults.firewall       || { pass: true, msg: 'N/A', na: true };
   results.processes  = osResults.processes      || { pass: true, msg: 'N/A', na: true };

@@ -140,8 +140,11 @@ const PROCESS_INFO = {
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 async function ps(cmd) {
+  // Must escape " → \" so cmd.exe doesn't break the outer double-quoted -Command string.
+  // Without this, any command containing "Running" or "user32.dll" etc. silently fails.
+  const safe = cmd.replace(/"/g, '\\"');
   const { stdout } = await execAsync(
-    `powershell -NoProfile -NonInteractive -Command "${cmd}"`,
+    `powershell -NoProfile -NonInteractive -Command "${safe}"`,
     { timeout: 12000 }
   );
   return stdout.trim();
@@ -159,6 +162,22 @@ async function sh(cmd) {
 }
 
 // ─── Individual checks ────────────────────────────────────────────────────────
+
+// ─── Admin rights check ───────────────────────────────────────────────────────
+async function checkIsAdmin() {
+  if (process.platform !== 'win32') return { pass: true, msg: 'N/A on this OS', na: true };
+  try {
+    // net session requires admin; exits 0 if admin, non-zero if not
+    await execAsync('net session >nul 2>&1', { timeout: 5000 });
+    return { pass: true, msg: 'Running with administrator privileges' };
+  } catch {
+    return {
+      pass: false,
+      msg:  'Not running as Administrator',
+      fix:  'Right-click "Alaric Secure Browser" → Run as administrator. Without admin rights the app cannot stop services or disconnect monitors.',
+    };
+  }
+}
 
 async function checkAntivirus(autoFix = true) {
   if (process.platform !== 'win32') return { pass: true, msg: 'N/A on this OS', na: true };
@@ -564,6 +583,9 @@ async function runAll(config = {}) {
   const autoFix = config.autoFix !== false;
   const NA = { pass: true, msg: 'Skipped by exam settings', na: true, skipped: true };
 
+  // Admin rights check first — determines whether auto-fix can work at all
+  const adminResult = await checkIsAdmin().catch(() => ({ pass: false, msg: 'Could not verify admin rights' }));
+
   // Services + processes first (sequential, services before processes)
   let services = NA, processes = NA;
   if (on('services'))  services  = await checkServices(autoFix).catch(e  => ({ pass: false, msg: e.message }));
@@ -581,6 +603,7 @@ async function runAll(config = {}) {
   return {
     platform:       process.platform,
     timestamp:      Date.now(),
+    adminRights:    adminResult,
     antivirus:      r(av),
     firewall:       r(fw),
     processes,
