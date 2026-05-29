@@ -635,6 +635,21 @@ ipcMain.handle('start-exam', async (_, { examUrl, examServerHost }) => {
 
 // ─── App lifecycle ────────────────────────────────────────────────────────────
 app.whenReady().then(async () => {
+  // On Windows packaged builds: check admin rights and auto-relaunch if missing.
+  // Without admin, every service/process/firewall operation silently fails.
+  if (process.platform === 'win32' && app.isPackaged) {
+    try {
+      await execAsync('net session >nul 2>&1', { timeout: 4000 });
+      // Admin confirmed — continue normally
+    } catch {
+      // Not admin — relaunch with elevation (triggers UAC prompt)
+      exec(`powershell -Command "Start-Process '${process.execPath}' -Verb RunAs"`,
+        () => { app._quitting = true; app.quit(); }
+      );
+      return; // Exit current non-admin instance
+    }
+  }
+
   // Create window first — dialog.showMessageBox() requires a parent window on macOS
   const lockData = readLockData();
   if (lockData) {
