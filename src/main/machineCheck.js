@@ -321,22 +321,29 @@ const PROCESS_TO_SERVICE = {
 async function _stopAndDisableService(rawName) {
   if (process.platform !== 'win32') return false;
   try {
-    // Get current start type before touching anything
+    // Save original start type
     const infoRaw = await ps(
       `$s=Get-Service -Name '${rawName}' -ErrorAction SilentlyContinue;` +
       `if($s){[PSCustomObject]@{Name=$s.Name;StartType=$s.StartType.ToString();Status=$s.Status.ToString()}|ConvertTo-Json -Compress}`
     );
     const info = infoRaw ? JSON.parse(infoRaw) : null;
-    const key = rawName.toLowerCase();
+    const key  = rawName.toLowerCase();
     if (info && !_serviceSnapshot.has(key)) {
       _serviceSnapshot.set(key, { name: info.Name, startType: info.StartType });
     }
-    // Stop it (force, ignore errors)
-    await ps(`Stop-Service -Name '${rawName}' -Force -ErrorAction SilentlyContinue`);
-    // Disable so Windows can't restart it automatically
-    await ps(`Set-Service -Name '${rawName}' -StartupType Disabled -ErrorAction SilentlyContinue`);
-    // Belt-and-suspenders: also disable via sc.exe
-    await execAsync(`sc.exe config "${rawName}" start= disabled`, { timeout: 5000 }).catch(() => {});
+
+    // DISABLE first so the service can't auto-restart while we're stopping it
+    await execAsync(`sc.exe config "${rawName}" start= disabled 2>nul`, { timeout: 5000 }).catch(() => {});
+    await ps(`Set-Service -Name '${rawName}' -StartupType Disabled -ErrorAction SilentlyContinue`).catch(() => {});
+
+    // Now stop via multiple methods — some RMM agents only respond to sc.exe / net stop
+    await execAsync(`sc.exe stop "${rawName}" 2>nul`, { timeout: 8000 }).catch(() => {});
+    await execAsync(`net stop "${rawName}" /y 2>nul`, { timeout: 8000 }).catch(() => {});
+    await ps(`Stop-Service -Name '${rawName}' -Force -ErrorAction SilentlyContinue`).catch(() => {});
+
+    // Kill any process running under this service name as an extra measure
+    await execAsync(`taskkill /f /fi "SERVICES eq ${rawName}" 2>nul`, { timeout: 5000 }).catch(() => {});
+
     return true;
   } catch { return false; }
 }
@@ -559,7 +566,7 @@ async function checkServices(autoFix = true) {
       } catch {}
     }
 
-    await new Promise(r => setTimeout(r, 1500)); // wait for stops to complete
+    await new Promise(r => setTimeout(r, 3000)); // wait for stops to complete (some services take 2-3s)
 
     // Re-scan
     const stillBlocked = await _getRunningBlacklistedServices();

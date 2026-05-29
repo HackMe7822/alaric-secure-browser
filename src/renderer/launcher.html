@@ -1097,23 +1097,21 @@ function handleUpdateStatus(d) {
 
   banner.className = '';
   progWrap.style.display = 'none';
-  _updateBlocking = false;
+  setUpdateBlock(false); // default: unblock
 
   switch (d.phase) {
     case 'checking':
       banner.className = 'checking';
       icon.textContent = '🔍';
       msg.textContent  = 'Checking for updates…';
-      _updateBlocking  = true;  // block Step 1 until check completes
-      // Safety: unblock after 12s in case server is unreachable
-      setTimeout(() => {
-        if (_updateBlocking) { _updateBlocking = false; banner.className = ''; }
-      }, 12000);
+      setUpdateBlock(true);
+      // Safety: unblock after 12s if server unreachable
+      setTimeout(() => { if (_updateBlocking) setUpdateBlock(false); }, 12000);
       break;
 
     case 'current':
     case 'dev':
-      _updateBlocking = false; // unblock Step 1
+      setUpdateBlock(false);
       banner.className = 'checking';
       icon.textContent = '✅';
       msg.textContent  = `v${d.version} — up to date`;
@@ -1123,14 +1121,16 @@ function handleUpdateStatus(d) {
     case 'available':
       banner.className = 'available';
       icon.textContent = '⬇';
-      msg.textContent  = `Update available: v${d.version} — downloading automatically…`;
-      _updateBlocking  = true;
+      msg.textContent  = `Update available: v${d.version} — downloading… Please wait, do not proceed.`;
+      setUpdateBlock(true);
+      // Save any entered URL so it survives the update restart
+      try { localStorage.setItem('alaric_pending_url', document.getElementById('exam-url').value || ''); } catch {}
       break;
 
     case 'downloading': {
       banner.className = 'downloading';
       icon.textContent = '⬇';
-      _updateBlocking  = true;
+      setUpdateBlock(true);
       const pct = d.percent || 0;
       const mb  = d.total ? ` (${(d.transferred/1048576).toFixed(1)} / ${(d.total/1048576).toFixed(1)} MB)` : '';
       msg.textContent = `Downloading update v${d.version || ''}… ${pct}%${mb}`;
@@ -1143,24 +1143,33 @@ function handleUpdateStatus(d) {
     case 'installing':
       banner.className = 'installing';
       icon.textContent = '🔄';
-      msg.textContent  = `Installing update v${d.version || ''} — app will restart automatically…`;
-      _updateBlocking  = true;
+      msg.textContent  = `Installing update — app will restart automatically…`;
+      setUpdateBlock(true);
       break;
 
     case 'pending_restart':
-      // Update downloaded but deferred because exam is in progress
       banner.className = 'checking';
       icon.textContent = '⏸';
       msg.textContent  = `Update v${d.version} ready — will install after exam completes`;
       break;
 
     case 'error':
-      _updateBlocking = false; // unblock Step 1 — user can continue with current version
+      setUpdateBlock(false);
       banner.className = 'error';
       icon.textContent = '⚠';
       msg.textContent  = `Update check failed — continuing with v${d.version || '?'}`;
       setTimeout(() => { banner.className = ''; }, 6000);
       break;
+  }
+}
+
+// Sync _updateBlocking with the actual HTML button disabled state
+function setUpdateBlock(blocked) {
+  _updateBlocking = blocked;
+  const btn1 = document.getElementById('btn-continue-1');
+  if (btn1) {
+    btn1.disabled = blocked;
+    btn1.title    = blocked ? 'Please wait — update in progress' : '';
   }
 }
 
@@ -1188,6 +1197,15 @@ document.getElementById('btn-continue-1').onclick = async function(e) {
 };
 
 // ─── Boot ─────────────────────────────────────────────────────────────────────
+// Restore exam URL saved before an auto-update restart
+try {
+  const saved = localStorage.getItem('alaric_pending_url');
+  if (saved) {
+    document.getElementById('exam-url').value = saved;
+    localStorage.removeItem('alaric_pending_url');
+  }
+} catch {}
+
 goStep(1);
 document.getElementById('exam-url').focus();
 </script>
