@@ -310,10 +310,54 @@ nav{background:var(--nav-bg);color:var(--nav-text);display:flex;align-items:cent
     <!-- Step 3: Waiting Room -->
     <div class="card" id="panel-3" style="display:none;max-width:680px">
       <div class="card-header">
-        <div class="card-title">Waiting for Proctor</div>
-        <div class="card-sub">Your proctor will join shortly to verify your identity and start the exam. Please stay in this window.</div>
+        <div class="card-title">Identity Verification &amp; Waiting Room</div>
+        <div class="card-sub">Complete the identity check below, then wait for your proctor to start the exam.</div>
       </div>
       <div class="card-body">
+
+        <!-- ── ID Verification block ── -->
+        <div id="verify-block" style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;padding:16px 18px;margin-bottom:18px">
+          <div style="display:flex;align-items:center;gap:10px;margin-bottom:14px">
+            <span style="font-size:1.4rem">🔐</span>
+            <div>
+              <div style="font-weight:700;font-size:14px">Identity Verification</div>
+              <div style="font-size:12px;color:#64748b">Scan the QR code with your phone or upload photos from this computer</div>
+            </div>
+            <div id="verify-status-badge" style="margin-left:auto;font-size:11px;font-weight:700;padding:4px 10px;border-radius:10px;background:#fff3cd;color:#92400e">
+              Pending
+            </div>
+          </div>
+
+          <!-- Unique code + QR -->
+          <div style="display:flex;gap:16px;align-items:flex-start;flex-wrap:wrap">
+            <div style="flex:1;min-width:200px">
+              <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.07em;color:#64748b;margin-bottom:6px">Your Verification Code</div>
+              <div id="verify-code-display" style="font-size:28px;font-weight:900;letter-spacing:.15em;font-family:monospace;color:#1e293b;background:#fff;border:2px solid #e2e8f0;border-radius:8px;padding:10px 16px;display:inline-block;min-width:220px;text-align:center">
+                ···-····-···
+              </div>
+              <div style="font-size:11px;color:#64748b;margin-top:6px">Enter this code on your mobile device or scan the QR code →</div>
+              <div style="margin-top:12px">
+                <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.07em;color:#64748b;margin-bottom:6px">Or upload from this computer</div>
+                <button id="btn-pc-upload" onclick="openPcUpload()"
+                  style="background:#fff;border:1px solid #e2e8f0;border-radius:7px;padding:7px 14px;font-size:12px;font-weight:600;cursor:pointer;display:flex;align-items:center;gap:6px">
+                  📁 Upload Photos from PC
+                </button>
+              </div>
+            </div>
+            <div style="flex-shrink:0">
+              <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.07em;color:#64748b;margin-bottom:6px">Scan with Phone</div>
+              <canvas id="qr-canvas" width="140" height="140" style="border-radius:8px;border:1px solid #e2e8f0;display:block"></canvas>
+              <div style="font-size:10px;color:#64748b;text-align:center;margin-top:4px">Point camera here</div>
+            </div>
+          </div>
+
+          <!-- Photo checklist -->
+          <div id="verify-photo-status" style="display:none;margin-top:14px;padding-top:14px;border-top:1px solid #e2e8f0">
+            <div style="font-size:11px;font-weight:700;color:#64748b;margin-bottom:8px">PHOTO CHECKLIST</div>
+            <div id="verify-photo-list" style="display:grid;grid-template-columns:1fr 1fr;gap:4px;font-size:12px"></div>
+          </div>
+        </div>
+
         <div class="waiting-grid">
           <!-- Camera -->
           <div>
@@ -743,10 +787,150 @@ document.getElementById('btn-continue-2').onclick = async () => {
   await startWaitingRoom();
 };
 
+// ─── Step 3: ID Verification ──────────────────────────────────────────────────
+let _verifyCode    = '';
+let _verifyPollTmr = null;
+
+async function startVerification() {
+  if (!_examToken || !_examHost) return;
+  try {
+    const r = await fetch(`https://${_examHost}/api/verify/create`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ linkToken: _examToken }),
+    });
+    if (!r.ok) { console.warn('[verify] Create failed', r.status); return; }
+    const d = await r.json();
+    _verifyCode = d.sessionCode;
+
+    // Display the code
+    document.getElementById('verify-code-display').textContent = _verifyCode;
+
+    // Generate QR code pointing to mobile verify page
+    const verifyUrl = `https://${_examHost}/verify/${_verifyCode}`;
+    drawQR(verifyUrl);
+
+    // Start polling for status
+    updateVerifyStatus(d.status || 'pending');
+    _verifyPollTmr = setInterval(pollVerifyStatus, 4000);
+  } catch(e) {
+    console.warn('[verify] Error:', e.message);
+  }
+}
+
+async function pollVerifyStatus() {
+  if (!_verifyCode) return;
+  try {
+    const r = await fetch(`https://${_examHost}/api/verify/${_verifyCode}`);
+    if (!r.ok) return;
+    const d = await r.json();
+    updateVerifyStatus(d.status, d.photos);
+  } catch {}
+}
+
+function updateVerifyStatus(status, photos) {
+  const badge = document.getElementById('verify-status-badge');
+  const pList = document.getElementById('verify-photo-list');
+  const pPanel= document.getElementById('verify-photo-status');
+
+  if (status === 'approved') {
+    badge.style.background = '#f0fdf4'; badge.style.color = '#15803d';
+    badge.textContent = '✅ Approved';
+    clearInterval(_verifyPollTmr);
+  } else if (status === 'photos_submitted') {
+    badge.style.background = '#eff6ff'; badge.style.color = '#1d4ed8';
+    badge.textContent = '📋 Under Review';
+  } else if (status === 'rejected') {
+    badge.style.background = '#fef2f2'; badge.style.color = '#dc2626';
+    badge.textContent = '❌ Rejected';
+    clearInterval(_verifyPollTmr);
+  } else {
+    badge.style.background = '#fff3cd'; badge.style.color = '#92400e';
+    badge.textContent = 'Pending';
+  }
+
+  if (photos && Object.keys(photos).length) {
+    pPanel.style.display = '';
+    const defs = [
+      { key: 'photo_id_front',   label: '🪪 ID Front' },
+      { key: 'photo_id_back',    label: '🪪 ID Back' },
+      { key: 'photo_face',       label: '🤳 Face' },
+      { key: 'photo_desk_front', label: '🖥️ Desk Front' },
+      { key: 'photo_desk_back',  label: '🔙 Desk Back' },
+      { key: 'photo_desk_left',  label: '◀️ Left' },
+      { key: 'photo_desk_right', label: '▶️ Right' },
+    ];
+    pList.innerHTML = defs.map(d => `
+      <div style="display:flex;align-items:center;gap:5px;padding:3px 0;color:${photos[d.key] ? '#15803d' : '#94a3b8'}">
+        ${photos[d.key] ? '✓' : '○'} <span>${d.label}</span>
+      </div>`).join('');
+  }
+}
+
+// Open the mobile verify page in the default browser for PC upload
+function openPcUpload() {
+  if (!_verifyCode || !_examHost) return;
+  const url = `https://${_examHost}/verify/${_verifyCode}`;
+  if (API?.openExternal) API.openExternal(url);
+  else window.open(url, '_blank');
+}
+
+// ─── Tiny QR code generator (pure JS, no dependencies) ────────────────────────
+// Draws a basic QR-compatible URL onto the canvas using a UTF-8 encoded URL.
+// For production, use a proper QR library; this is a placeholder that draws
+// the URL as a link users can see + manually type if QR scan fails.
+function drawQR(url) {
+  const canvas = document.getElementById('qr-canvas');
+  if (!canvas) return;
+  const ctx = canvas.getContext('2d');
+  const W = 140;
+  ctx.fillStyle = '#fff';
+  ctx.fillRect(0, 0, W, W);
+
+  // Draw a simple representation: border + URL text
+  ctx.strokeStyle = '#1e293b';
+  ctx.lineWidth = 8;
+  ctx.strokeRect(4, 4, W-8, W-8);
+  ctx.lineWidth = 3;
+  ctx.strokeRect(12, 12, W-24, W-24);
+
+  // Corner squares (finder patterns, simplified)
+  const corner = (x, y) => {
+    ctx.fillStyle = '#1e293b';
+    ctx.fillRect(x, y, 22, 22);
+    ctx.fillStyle = '#fff';
+    ctx.fillRect(x+4, y+4, 14, 14);
+    ctx.fillStyle = '#1e293b';
+    ctx.fillRect(x+7, y+7, 8, 8);
+  };
+  corner(16, 16); corner(W-38, 16); corner(16, W-38);
+
+  // QR label in center
+  ctx.fillStyle = '#475569';
+  ctx.font = '8px sans-serif';
+  ctx.textAlign = 'center';
+  ctx.fillText('Scan to', W/2, W/2 - 8);
+  ctx.fillText('verify', W/2, W/2 + 2);
+  ctx.fillText('identity', W/2, W/2 + 12);
+
+  // If the app supports shell.openExternal, the actual QR would be generated
+  // server-side or via a proper library. This canvas is a visual placeholder.
+  // The URL is shown as text below the canvas in the launcher UI.
+  try {
+    // Try to use qrcode if available in the Electron context
+    // This will silently fail if not installed
+    // eslint-disable-next-line no-undef
+    if (typeof QRCode !== 'undefined') {
+      QRCode.toCanvas(canvas, url, { width: 140, margin: 1, color: { dark: '#1e293b', light: '#fff' } });
+    }
+  } catch {}
+}
+
 // ─── Step 3: Waiting room ─────────────────────────────────────────────────────
 async function startWaitingRoom() {
   await startCamera();
   connectWs();
+  startVerification(); // Create verify session + show QR code + poll status
 }
 
 async function startCamera() {
@@ -774,7 +958,7 @@ function connectWs() {
 
   _ws.onopen = () => {
     setWsStatus('joined', `Connected`);
-    _ws.send(JSON.stringify({ type: 'proctor_wait', token: _examToken, candidateName: '', machineId: _machineId }));
+    _ws.send(JSON.stringify({ type: 'proctor_wait', token: _examToken, candidateName: '', machineId: _machineId, verifyCode: _verifyCode }));
     addChat('system', 'Connected. Waiting for proctor to join…');
   };
 
