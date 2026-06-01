@@ -457,9 +457,17 @@ function createExamWindow(examUrl) {
     }
   });
 
-  // Keep fullscreen enforced
+  // Keep fullscreen enforced — use a flag to prevent re-entrant triggering.
+  // Without this, setFullScreen(true) causes another leave-full-screen event
+  // which the exam page interprets as a real fullscreen exit violation.
+  let _restoringFullscreen = false;
   examWin.on('leave-full-screen', () => {
-    if (isExamLive && examWin && !examWin.isDestroyed()) examWin.setFullScreen(true);
+    if (!isExamLive || !examWin || examWin.isDestroyed() || _restoringFullscreen) return;
+    _restoringFullscreen = true;
+    // Tell exam page to ignore the next fullscreen event (it's us restoring, not the user)
+    if (!examWin.isDestroyed()) examWin.webContents.send('suppress-fullscreen-event');
+    examWin.setFullScreen(true);
+    setTimeout(() => { _restoringFullscreen = false; }, 1500);
   });
 
   // Keep focus on exam window; log the focus loss as a tab_switch security event

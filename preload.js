@@ -19,6 +19,10 @@ contextBridge.exposeInMainWorld('AlaricProctor', {
   onSecurityEvent: (cb) => {
     ipcRenderer.on('security-event', (_, data) => cb(data));
   },
+  // Suppress next fullscreen event (sent when Electron restores fullscreen, not user exit)
+  onSuppressFullscreen: (cb) => {
+    ipcRenderer.on('suppress-fullscreen-event', () => cb());
+  },
 
   // Protocol deep-link URL passed at launch
   onProtocolUrl: (cb) => {

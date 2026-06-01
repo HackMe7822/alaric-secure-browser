@@ -244,28 +244,33 @@ async function applyWindowsRules() {
     // Remove any leftover Alaric rules
     await ps(`Get-NetFirewallRule -DisplayName "${RULE_PREFIX}*" -ErrorAction SilentlyContinue | Remove-NetFirewallRule`).catch(() => {});
 
-    // Set default outbound = Block (explicit Allow rules win over this)
-    await ps('Set-NetFirewallProfile -All -DefaultOutboundAction Block');
+    // Block outbound TCP only — NOT UDP.
+    // UDP must remain open for WebRTC STUN/ICE (screen share, webcam to proctor).
+    // STUN uses UDP to stun.l.google.com which is NOT our exam server IP.
+    // Blocking ALL outbound (including UDP) breaks WebRTC and live monitoring.
+    // Security: all screen-share services (Teams/Zoom/Meet) need TCP for signaling —
+    // blocking outbound TCP kills their signaling, so UDP-only traffic is harmless.
+    await ps('Set-NetFirewallProfile -All -DefaultOutboundAction Allow');  // reset first
+    // Block ALL outbound TCP except exam server
+    await ps(`New-NetFirewallRule -DisplayName "${RULE_PREFIX}BlockTCP" -Direction Outbound -Action Block -Protocol TCP`);
 
     // Windows -RemoteAddress only accepts IP addresses, not hostnames
     const validIPs = [..._serverIPs].filter(isIP);
     if (!validIPs.length) {
-      // DNS failed entirely — do NOT apply DefaultOutboundAction=Block yet:
-      // that would permanently block the exam server with no whitelist entry.
-      // Restore DefaultOutboundAction to its original value and abort.
       await restoreWindowsRules().catch(() => {});
-      console.error('[network] DNS resolution failed — no valid IPs for exam server. Firewall lockdown skipped to prevent bricking network access.');
+      console.error('[network] DNS resolution failed — firewall lockdown skipped.');
       return;
     }
     const ips = validIPs.join('","');
 
-    // Allow exam server (TCP + UDP for WebRTC)
+    // Allow exam server TCP (takes priority over the block rule above — added after)
     await ps(`New-NetFirewallRule -DisplayName "${RULE_PREFIX}ServerTCP" -Direction Outbound -Action Allow -Protocol TCP -RemoteAddress "${ips}"`);
+    // Allow exam server UDP (WebRTC media)
     await ps(`New-NetFirewallRule -DisplayName "${RULE_PREFIX}ServerUDP" -Direction Outbound -Action Allow -Protocol UDP -RemoteAddress "${ips}"`);
 
-    // Allow DNS, DHCP, NTP (needed for network stack)
-    await ps(`New-NetFirewallRule -DisplayName "${RULE_PREFIX}DNS"  -Direction Outbound -Action Allow -Protocol UDP -RemotePort 53`);
-    await ps(`New-NetFirewallRule -DisplayName "${RULE_PREFIX}DHCP" -Direction Outbound -Action Allow -Protocol UDP -RemotePort 67,68,123`);
+    // DNS and loopback (UDP allowed by default now, but be explicit)
+    await ps(`New-NetFirewallRule -DisplayName "${RULE_PREFIX}DNS"  -Direction Outbound -Action Allow -Protocol TCP -RemotePort 53`);
+    await ps(`New-NetFirewallRule -DisplayName "${RULE_PREFIX}DHCP" -Direction Outbound -Action Allow -Protocol TCP -RemotePort 67,68,123`);
 
     // Allow loopback (Electron IPC uses localhost)
     await ps(`New-NetFirewallRule -DisplayName "${RULE_PREFIX}Loop" -Direction Outbound -Action Allow -Protocol Any -RemoteAddress "127.0.0.1","::1"`);
@@ -361,12 +366,13 @@ async function scanConnections() {
     }
 
     if (suspicious.length > 0) {
-      // Auto-kill the suspicious connection process too
-      await killExistingRemoteConnections();
+      // Log warning only — don't kill connections here.
+      // The firewall already blocks NEW connections; killing existing ones risks
+      // terminating Electron's own WebRTC/STUN connections needed for live monitoring.
       _callback({
         type:     'suspicious_connection',
-        severity: 'critical',
-        message:  `Connection to non-exam host detected and terminated: ${suspicious.slice(0,3).join(', ')}`,
+        severity: 'warning',
+        message:  `Outbound TCP to non-exam host: ${suspicious.slice(0,3).join(', ')}`,
         timestamp: Date.now(),
       });
     }
