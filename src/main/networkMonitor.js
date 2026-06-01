@@ -263,14 +263,16 @@ async function applyWindowsRules() {
     }
     const ips = validIPs.join('","');
 
-    // Allow exam server TCP (takes priority over the block rule above — added after)
+    // Allow exam server TCP (overrides the block-TCP rule above)
     await ps(`New-NetFirewallRule -DisplayName "${RULE_PREFIX}ServerTCP" -Direction Outbound -Action Allow -Protocol TCP -RemoteAddress "${ips}"`);
-    // Allow exam server UDP (WebRTC media)
+    // Allow exam server UDP (WebRTC media, overrides any UDP block if added)
     await ps(`New-NetFirewallRule -DisplayName "${RULE_PREFIX}ServerUDP" -Direction Outbound -Action Allow -Protocol UDP -RemoteAddress "${ips}"`);
 
-    // DNS and loopback (UDP allowed by default now, but be explicit)
-    await ps(`New-NetFirewallRule -DisplayName "${RULE_PREFIX}DNS"  -Direction Outbound -Action Allow -Protocol TCP -RemotePort 53`);
-    await ps(`New-NetFirewallRule -DisplayName "${RULE_PREFIX}DHCP" -Direction Outbound -Action Allow -Protocol TCP -RemotePort 67,68,123`);
+    // DNS uses UDP port 53 (NOT TCP — that's only for large zone transfers)
+    // UDP is allowed by default now but be explicit for clarity
+    await ps(`New-NetFirewallRule -DisplayName "${RULE_PREFIX}DNS"  -Direction Outbound -Action Allow -Protocol UDP -RemotePort 53`);
+    // DHCP uses UDP 67/68, NTP uses UDP 123
+    await ps(`New-NetFirewallRule -DisplayName "${RULE_PREFIX}DHCP" -Direction Outbound -Action Allow -Protocol UDP -RemotePort 67,68,123`);
 
     // Allow loopback (Electron IPC uses localhost)
     await ps(`New-NetFirewallRule -DisplayName "${RULE_PREFIX}Loop" -Direction Outbound -Action Allow -Protocol Any -RemoteAddress "127.0.0.1","::1"`);

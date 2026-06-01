@@ -37,7 +37,9 @@ contextBridge.exposeInMainWorld('AlaricProctor', {
   // Generate QR code locally (no server, no CORS issues)
   generateQR:         (url) => ipcRenderer.invoke('generate-qr', url),
   // Open verify/upload page inside Electron (not external browser)
-  openVerifyWindow:   (url) => ipcRenderer.invoke('open-verify-window', url),
+  openVerifyWindow:    (url) => ipcRenderer.invoke('open-verify-window', url),
+  // Close the verify window after photos submitted (window.close() doesn't work in Electron child)
+  closeVerifyWindow:   ()    => ipcRenderer.invoke('close-verify-window'),
   // Auto-disconnect duplicate monitors (Windows: DisplaySwitch /internal)
   fixMultiMonitor:    () => ipcRenderer.invoke('fix-multi-monitor'),
   // Restore multi-monitor (DisplaySwitch /extend) — undo after exam / during testing

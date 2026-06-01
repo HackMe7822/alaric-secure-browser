@@ -253,8 +253,9 @@ function sendDeepLink(url) {
 }
 
 // ─── Display management ───────────────────────────────────────────────────────
-let _displayAddedHandler = null;
-let _displayWasExtended  = false; // true if machine had multiple monitors before we switched
+let _displayAddedHandler    = null;
+let _displayWasExtended     = false;
+let _restoringFullscreen    = false; // module-level — must NOT be inside createExamWindow()
 
 async function switchToInternalDisplay() {
   if (process.platform !== 'win32') return false;
@@ -457,10 +458,8 @@ function createExamWindow(examUrl) {
     }
   });
 
-  // Keep fullscreen enforced — use a flag to prevent re-entrant triggering.
-  // Without this, setFullScreen(true) causes another leave-full-screen event
-  // which the exam page interprets as a real fullscreen exit violation.
-  let _restoringFullscreen = false;
+  // Keep fullscreen enforced — _restoringFullscreen is module-level (not local)
+  // so it persists across the handler calls and isn't reset on each createExamWindow().
   examWin.on('leave-full-screen', () => {
     if (!isExamLive || !examWin || examWin.isDestroyed() || _restoringFullscreen) return;
     _restoringFullscreen = true;
@@ -618,23 +617,31 @@ ipcMain.handle('generate-qr', async (_, url) => {
   } catch(e) { return null; }
 });
 
+let _verifyWin = null;
+
 ipcMain.handle('open-verify-window', (_, url) => {
-  const win = new BrowserWindow({
+  if (_verifyWin && !_verifyWin.isDestroyed()) { _verifyWin.focus(); return; }
+  _verifyWin = new BrowserWindow({
     width:  500,
     height: 800,
     title:  'Identity Verification — Alaric',
     parent: launcherWin || undefined,
     modal:  false,
-    webPreferences: { contextIsolation: true, nodeIntegration: false },
+    webPreferences: {
+      preload:          path.join(__dirname, 'preload.js'),
+      contextIsolation: true,
+      nodeIntegration:  false,
+    },
   });
-  win.setMenu(null);
-  win.loadURL(url);
+  _verifyWin.setMenu(null);
+  _verifyWin.loadURL(url);
+  _verifyWin.webContents.on('will-prevent-unload', e => e.preventDefault());
+  _verifyWin.on('closed', () => { _verifyWin = null; });
+});
 
-  // Prevent Chrome-style "Leave site?" dialog when user clicks X
-  // The page may have a beforeunload handler — bypass it so window closes cleanly
-  win.webContents.on('will-prevent-unload', (event) => {
-    event.preventDefault(); // allow close without dialog
-  });
+// Called by verify page after photos submitted — closes the Electron verify window
+ipcMain.handle('close-verify-window', () => {
+  if (_verifyWin && !_verifyWin.isDestroyed()) { _verifyWin.destroy(); }
 });
 
 ipcMain.handle('restore-display', async () => {

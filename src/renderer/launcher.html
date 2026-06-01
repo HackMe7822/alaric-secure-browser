@@ -699,12 +699,12 @@ async function runChecks() {
 
   if (displayCount === 1) {
     results.displays = { pass: true, msg: '1 display — single monitor confirmed' };
-  } else if (_precheckConfig.displayControlMode === 1) {
-    // Physical removal required — don't auto-fix, ask user to unplug
+  } else if (parseInt(_precheckConfig.displayControlMode) === 1) {
+    // Physical removal required — show instruction, do NOT auto-disconnect
     results.displays = {
       pass: false,
-      msg:  `${displayCount} displays detected — physical removal required`,
-      fix:  'This exam requires you to physically unplug all extra monitors, then re-run checks',
+      msg:  `${displayCount} displays detected — physical cable removal required`,
+      fix:  'Physically unplug the HDMI/DisplayPort cable from all extra monitors, then click Re-run Checks',
     };
   } else {
     // Multiple monitors detected — show auto-fixing status immediately
