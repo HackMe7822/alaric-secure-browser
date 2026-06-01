@@ -169,7 +169,8 @@ async function killExistingRemoteConnections() {
     return;
   }
 
-  const examIPList = validIPs.map(ip => `"${ip}"`).join(',');
+  const examIPList  = validIPs.map(ip => `"${ip}"`).join(',');
+  const electronPid = process.pid; // Pass Electron PID to exclude from kill list
 
   // Use psBig (base64 -EncodedCommand) — avoids cmd.exe newline-splitting bug
   // that made the original ps() multi-line call completely inoperative.
@@ -177,7 +178,8 @@ async function killExistingRemoteConnections() {
   const script = `
 $examIPs    = @(${examIPList})
 $localPre   = @('127.','0.0.0.0','::1','fe80','169.254.')
-$systemPIDs = @(0,4,8)
+# Exclude system PIDs + Electron app PID so we never kill our own WS/WebRTC connections
+$systemPIDs = @(0,4,8,${electronPid})
 
 function IsLocal([string]$ip) {
   foreach ($p in $localPre) { if ($ip.StartsWith($p)) { return $true } }

@@ -91,7 +91,9 @@ async function runRelease() {
   await networkMonitor.restore().catch(() => {});
 
   // Restore display mode (if we switched to single-display, restore extend)
-  if (_displayWasExtended && process.platform === 'win32') {
+  // Always try to restore multi-monitor on release, even if _displayWasExtended is false
+  // (the flag may not be set if machine rebooted between exam and release)
+  if (process.platform === 'win32') {
     await execAsync('DisplaySwitch.exe /extend', { timeout: 8000 }).catch(() => {});
     _displayWasExtended = false;
   }
