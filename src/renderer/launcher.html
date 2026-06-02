@@ -722,17 +722,16 @@ async function runChecks() {
 
   const results = {};
 
-  // Always use WMI physical count — detects cables plugged in but software-disabled.
-  // Physical removal is ALWAYS required (no software auto-disconnect).
-  const physicalCount = osResults.physicalDisplayCount || displayCount;
-
-  if (physicalCount === 1) {
-    results.displays = { pass: true, msg: '✓ Single physical monitor — no extra cables detected' };
+  // Use Electron's screen.getAllDisplays().length — this IS the physical count.
+  // Since we never auto-disconnect, a cable physically plugged in = display appears.
+  // Cable unplugged = display removed. Simple and correct.
+  // (WMI approaches returned ghost entries from previously-connected monitors)
+  if (displayCount === 1) {
+    results.displays = { pass: true, msg: '✓ Single monitor detected' };
   } else {
-    // Always require physical cable removal — no software disconnect
     results.displays = {
       pass: false,
-      msg:  `${physicalCount} monitor cables detected`,
+      msg:  `${displayCount} monitors detected`,
       fix:  'Physically unplug the HDMI / DisplayPort / VGA cable from all extra monitors, then click Re-run Checks',
     };
   }
