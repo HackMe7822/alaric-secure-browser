@@ -171,11 +171,21 @@ async function sh(cmd) {
 async function getPhysicalDisplayCount() {
   if (process.platform !== 'win32') return 1;
   try {
+    // Get-PnpDevice -Class Monitor shows ALL hardware-connected monitors at the
+    // driver/PnP level, regardless of whether Windows has them enabled in display
+    // settings. Win32_DesktopMonitor only shows ACTIVE displays, so after
+    // DisplaySwitch /internal it wrongly reports 1 even with cable plugged in.
     const raw = await ps(
-      '(Get-CimInstance -ClassName Win32_DesktopMonitor | Where-Object { $_.PNPDeviceID -ne $null } | Measure-Object).Count'
+      '(Get-PnpDevice -Class Monitor -ErrorAction SilentlyContinue | Measure-Object).Count'
     );
     const n = parseInt(raw);
-    return isNaN(n) ? 1 : Math.max(1, n);
+    if (!isNaN(n) && n > 0) return n;
+    // Fallback: try Win32_PnPEntity which also lists hardware-level monitor devices
+    const raw2 = await ps(
+      "(Get-WmiObject -Class Win32_PnPEntity -ErrorAction SilentlyContinue | Where-Object { $_.PNPClass -eq 'Monitor' } | Measure-Object).Count"
+    );
+    const n2 = parseInt(raw2);
+    return (!isNaN(n2) && n2 > 0) ? n2 : 1;
   } catch { return 1; }
 }
 
