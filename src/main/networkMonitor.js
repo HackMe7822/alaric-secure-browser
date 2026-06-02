@@ -244,17 +244,20 @@ async function applyWindowsRules() {
     // Remove any leftover Alaric rules
     await ps(`Get-NetFirewallRule -DisplayName "${RULE_PREFIX}*" -ErrorAction SilentlyContinue | Remove-NetFirewallRule`).catch(() => {});
 
-    // Block outbound TCP only — NOT UDP.
-    // UDP must remain open for WebRTC STUN/ICE (screen share, webcam to proctor).
-    // STUN uses UDP to stun.l.google.com which is NOT our exam server IP.
-    // Blocking ALL outbound (including UDP) breaks WebRTC and live monitoring.
-    // Security: all screen-share services (Teams/Zoom/Meet) need TCP for signaling —
-    // blocking outbound TCP kills their signaling, so UDP-only traffic is harmless.
-    await ps('Set-NetFirewallProfile -All -DefaultOutboundAction Allow');  // reset first
-    // Block ALL outbound TCP except exam server
-    await ps(`New-NetFirewallRule -DisplayName "${RULE_PREFIX}BlockTCP" -Direction Outbound -Action Block -Protocol TCP`);
+    // CORRECT approach: DefaultOutboundAction=Block + explicit Allow rules.
+    // Explicit Allow rules ALWAYS override DefaultOutboundAction (that's by design).
+    // Do NOT use explicit BlockTCP — explicit Block overrides explicit Allow at same scope,
+    // which would block even the exam server TCP Allow rule.
+    //
+    // Strategy:
+    //   DefaultOutboundAction = Block   → blocks TCP/UDP by default
+    //   + Allow exam server TCP+UDP     → exam traffic works
+    //   + Allow ALL UDP outbound        → WebRTC STUN/ICE works (needs UDP to Google IPs)
+    //   + Allow DNS/DHCP/NTP/loopback  → network stack works
+    //   Result: outbound TCP to non-exam IPs blocked. UDP fully open (STUN works).
+    //   Screen-share services (Teams/Zoom) need TCP signaling → blocked.
+    await ps('Set-NetFirewallProfile -All -DefaultOutboundAction Block');
 
-    // Windows -RemoteAddress only accepts IP addresses, not hostnames
     const validIPs = [..._serverIPs].filter(isIP);
     if (!validIPs.length) {
       await restoreWindowsRules().catch(() => {});
@@ -263,16 +266,17 @@ async function applyWindowsRules() {
     }
     const ips = validIPs.join('","');
 
-    // Allow exam server TCP (overrides the block-TCP rule above)
+    // Allow exam server TCP + UDP (explicit Allow overrides DefaultOutboundAction=Block)
     await ps(`New-NetFirewallRule -DisplayName "${RULE_PREFIX}ServerTCP" -Direction Outbound -Action Allow -Protocol TCP -RemoteAddress "${ips}"`);
-    // Allow exam server UDP (WebRTC media, overrides any UDP block if added)
     await ps(`New-NetFirewallRule -DisplayName "${RULE_PREFIX}ServerUDP" -Direction Outbound -Action Allow -Protocol UDP -RemoteAddress "${ips}"`);
 
-    // DNS uses UDP port 53 (NOT TCP — that's only for large zone transfers)
-    // UDP is allowed by default now but be explicit for clarity
+    // Allow ALL outbound UDP — WebRTC STUN/ICE needs UDP to Google STUN IPs
+    // Screen-share services use TCP for signaling → still blocked by default.
+    await ps(`New-NetFirewallRule -DisplayName "${RULE_PREFIX}AllUDP" -Direction Outbound -Action Allow -Protocol UDP`);
+
+    // Explicit DNS + DHCP + NTP rules (covered by AllUDP above but explicit for clarity)
     await ps(`New-NetFirewallRule -DisplayName "${RULE_PREFIX}DNS"  -Direction Outbound -Action Allow -Protocol UDP -RemotePort 53`);
-    // DHCP uses UDP 67/68, NTP uses UDP 123
-    await ps(`New-NetFirewallRule -DisplayName "${RULE_PREFIX}DHCP" -Direction Outbound -Action Allow -Protocol UDP -RemotePort 67,68,123`);
+    await ps(`New-NetFirewallRule -DisplayName "${RULE_PREFIX}DHCP" -Direction Outbound -Action Allow -Protocol UDP -RemotePort 67,123`);
 
     // Allow loopback (Electron IPC uses localhost)
     await ps(`New-NetFirewallRule -DisplayName "${RULE_PREFIX}Loop" -Direction Outbound -Action Allow -Protocol Any -RemoteAddress "127.0.0.1","::1"`);

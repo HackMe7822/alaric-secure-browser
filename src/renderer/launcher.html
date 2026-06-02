@@ -699,7 +699,7 @@ async function runChecks() {
 
   if (displayCount === 1) {
     results.displays = { pass: true, msg: '1 display — single monitor confirmed' };
-  } else if (parseInt(_precheckConfig.displayControlMode) === 1) {
+  } else if (parseInt(_precheckConfig.displayControlMode || 0) === 1) {
     // Physical removal required — show instruction, do NOT auto-disconnect
     results.displays = {
       pass: false,
