@@ -441,6 +441,19 @@ function createExamWindow(examUrl) {
   examWin.setMenu(null);
   examWin.setAlwaysOnTop(true, 'screen-saver', 1);
 
+  // Auto-grant camera, microphone and display-capture permissions so the exam page
+  // can capture webcam (for live monitoring) and screen (for screen share + recording).
+  // Without this, getUserMedia() silently returns null in an Electron BrowserWindow
+  // loading an external URL — causing the webcam to show black in the live monitor.
+  examWin.webContents.session.setPermissionRequestHandler((wc, permission, callback) => {
+    const allowed = ['media', 'camera', 'microphone', 'display-capture', 'audioCapture', 'videoCapture'];
+    callback(allowed.includes(permission));
+  });
+  examWin.webContents.session.setPermissionCheckHandler((wc, permission) => {
+    const allowed = ['media', 'camera', 'microphone', 'display-capture', 'audioCapture', 'videoCapture'];
+    return allowed.includes(permission);
+  });
+
   // Block right-click
   examWin.webContents.on('context-menu', e => e.preventDefault());
 
