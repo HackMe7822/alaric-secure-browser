@@ -680,7 +680,7 @@ async function runChecks() {
           displays:           on('check_displays'),
           camera:             on('check_camera'),
           mic:                on('check_mic'),
-          displayControlMode: parseInt(ex.display_control_mode) === 1 ? 1 : 0,
+          // displayControlMode removed — physical cable removal always required
         };
       }
     } catch(e) { /* keep existing _precheckConfig if fetch fails */ }
@@ -722,66 +722,19 @@ async function runChecks() {
 
   const results = {};
 
-  const requirePhysical = parseInt(_precheckConfig.displayControlMode || 0) === 1;
-
-  // When physical removal is required, use WMI physical count (from osResults)
-  // NOT Electron's active display count — WMI detects cables that are plugged in
-  // but software-disabled (which Electron reports as 1 display).
+  // Always use WMI physical count — detects cables plugged in but software-disabled.
+  // Physical removal is ALWAYS required (no software auto-disconnect).
   const physicalCount = osResults.physicalDisplayCount || displayCount;
-  const countToCheck  = requirePhysical ? physicalCount : displayCount;
 
-  if (countToCheck === 1) {
-    results.displays = { pass: true, msg: requirePhysical
-      ? '1 physical monitor confirmed — no extra cables detected'
-      : '1 display — single monitor confirmed' };
-  } else if (requirePhysical) {
-    // Physical removal required — show instruction, do NOT auto-disconnect
+  if (physicalCount === 1) {
+    results.displays = { pass: true, msg: '✓ Single physical monitor — no extra cables detected' };
+  } else {
+    // Always require physical cable removal — no software disconnect
     results.displays = {
       pass: false,
-      msg:  `${physicalCount} monitor${physicalCount > 1 ? 's' : ''} physically connected — cable removal required`,
-      fix:  'Physically unplug the HDMI/DisplayPort/VGA cable from all extra monitors, then click Re-run Checks',
+      msg:  `${physicalCount} monitor cables detected`,
+      fix:  'Physically unplug the HDMI / DisplayPort / VGA cable from all extra monitors, then click Re-run Checks',
     };
-  } else {
-    // Multiple monitors detected — show auto-fixing status immediately
-    const dispItem = document.getElementById(`chk-displays`);
-    const dispIcon = document.getElementById(`ci-displays`);
-    const dispMsg  = document.getElementById(`cm-displays`);
-    if (dispIcon) { dispIcon.className = 'check-icon loading'; dispIcon.textContent = '⟳'; }
-    if (dispMsg)  dispMsg.textContent = `${displayCount} displays found — auto-disconnecting extras…`;
-
-    let fixResult = { ok: false };
-    if (API?.fixMultiMonitor) {
-      fixResult = await API.fixMultiMonitor().catch(() => ({ ok: false }));
-    }
-
-    if (fixResult.ok) {
-      // IPC already polled up to 8s waiting for display count to drop.
-      // fixResult.displayCount already reflects the updated count.
-      const newCount = fixResult.displayCount ?? await API.getDisplayCount().catch(() => displayCount);
-      if (newCount === 1) {
-        results.displays = { pass: true, msg: 'Extra display auto-disconnected — single monitor active', fixed: true };
-        // Show restore button so user can get their second monitor back if needed
-        document.getElementById('btn-restore-display').style.display = '';
-      } else {
-        results.displays = {
-          pass: false,
-          msg:  `${newCount} display${newCount > 1 ? 's' : ''} still active after auto-fix`,
-          fix:  'Unplug all external monitors physically and re-run checks',
-        };
-      }
-    } else if ((API?.platform || 'win32') === 'win32') {
-      results.displays = {
-        pass: false,
-        msg:  `${displayCount} displays detected — could not auto-disconnect`,
-        fix:  'Win + P → "PC screen only", or unplug external monitors',
-      };
-    } else {
-      results.displays = {
-        pass: false,
-        msg:  `${displayCount} displays detected`,
-        fix:  'System Settings → Displays → select second display → Use As → Mirror display',
-      };
-    }
   }
 
   results.admin      = osResults.adminRights    || { pass: true, msg: 'N/A', na: true };
