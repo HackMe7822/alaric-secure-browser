@@ -163,6 +163,22 @@ async function sh(cmd) {
 // ─── Individual checks ────────────────────────────────────────────────────────
 
 // ─── Admin rights check ───────────────────────────────────────────────────────
+// Returns count of PHYSICALLY connected monitors via WMI.
+// Electron's screen.getAllDisplays() only counts ACTIVE (software-enabled) monitors.
+// Win32_DesktopMonitor enumerates all hardware-connected monitors regardless of
+// whether they are enabled in Windows display settings.
+// This is the correct check when the exam requires physical cable removal.
+async function getPhysicalDisplayCount() {
+  if (process.platform !== 'win32') return 1;
+  try {
+    const raw = await ps(
+      '(Get-CimInstance -ClassName Win32_DesktopMonitor | Where-Object { $_.PNPDeviceID -ne $null } | Measure-Object).Count'
+    );
+    const n = parseInt(raw);
+    return isNaN(n) ? 1 : Math.max(1, n);
+  } catch { return 1; }
+}
+
 async function checkIsAdmin() {
   if (process.platform !== 'win32') return { pass: true, msg: 'N/A on this OS', na: true };
   try {
@@ -690,6 +706,10 @@ async function runAll(config = {}) {
   // Admin rights check first — determines whether auto-fix can work at all
   const adminResult = await checkIsAdmin().catch(() => ({ pass: false, msg: 'Could not verify admin rights' }));
 
+  // Physical display count (WMI) — used when displayControlMode=1 (cable removal required)
+  // Run regardless of displays check setting so the count is always available
+  const physicalDisplayCount = await getPhysicalDisplayCount().catch(() => 1);
+
   // Services + processes first (sequential, services before processes)
   let services = NA, processes = NA;
   if (on('services'))  services  = await checkServices(autoFix).catch(e  => ({ pass: false, msg: e.message }));
@@ -706,16 +726,17 @@ async function runAll(config = {}) {
   const r = x => x.status === 'fulfilled' ? x.value : { pass: false, msg: x.reason?.message || 'Check failed' };
 
   return {
-    platform:       process.platform,
-    timestamp:      Date.now(),
-    adminRights:    adminResult,
-    antivirus:      r(av),
-    firewall:       r(fw),
+    platform:            process.platform,
+    timestamp:           Date.now(),
+    adminRights:         adminResult,
+    physicalDisplayCount,   // WMI count — includes software-disabled monitors
+    antivirus:           r(av),
+    firewall:            r(fw),
     processes,
-    virtualMachine: r(vm),
-    remoteSession:  r(remote),
+    virtualMachine:      r(vm),
+    remoteSession:       r(remote),
     services,
-    browsers:       r(browsers),
+    browsers:            r(browsers),
   };
 }
 

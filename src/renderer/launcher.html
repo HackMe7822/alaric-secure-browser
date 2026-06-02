@@ -697,14 +697,24 @@ async function runChecks() {
 
   const results = {};
 
-  if (displayCount === 1) {
-    results.displays = { pass: true, msg: '1 display — single monitor confirmed' };
-  } else if (parseInt(_precheckConfig.displayControlMode || 0) === 1) {
+  const requirePhysical = parseInt(_precheckConfig.displayControlMode || 0) === 1;
+
+  // When physical removal is required, use WMI physical count (from osResults)
+  // NOT Electron's active display count — WMI detects cables that are plugged in
+  // but software-disabled (which Electron reports as 1 display).
+  const physicalCount = osResults.physicalDisplayCount || displayCount;
+  const countToCheck  = requirePhysical ? physicalCount : displayCount;
+
+  if (countToCheck === 1) {
+    results.displays = { pass: true, msg: requirePhysical
+      ? '1 physical monitor confirmed — no extra cables detected'
+      : '1 display — single monitor confirmed' };
+  } else if (requirePhysical) {
     // Physical removal required — show instruction, do NOT auto-disconnect
     results.displays = {
       pass: false,
-      msg:  `${displayCount} displays detected — physical cable removal required`,
-      fix:  'Physically unplug the HDMI/DisplayPort cable from all extra monitors, then click Re-run Checks',
+      msg:  `${physicalCount} monitor${physicalCount > 1 ? 's' : ''} physically connected — cable removal required`,
+      fix:  'Physically unplug the HDMI/DisplayPort/VGA cable from all extra monitors, then click Re-run Checks',
     };
   } else {
     // Multiple monitors detected — show auto-fixing status immediately
