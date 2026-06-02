@@ -661,6 +661,31 @@ async function runChecks() {
   sum.className = 'checks-summary running';
   sum.innerHTML = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" style="animation:spin .9s linear infinite;flex-shrink:0"><path d="M21 12a9 9 0 11-6.219-8.56"/></svg>Running checks…`;
 
+  // Re-fetch exam config every time checks run — ensures latest admin settings
+  // (e.g. displayControlMode toggle) are picked up without re-entering the URL.
+  if (_examToken && _examHost) {
+    try {
+      const r = await fetch(`https://${_examHost}/exam/${_examToken}`, { signal: AbortSignal.timeout(6000) });
+      if (r.ok) {
+        const data = await r.json();
+        const ex = data.exam || {};
+        const on = k => ex[k] !== 0 && ex[k] !== false;
+        _precheckConfig = {
+          antivirus:          on('check_antivirus'),
+          firewall:           on('check_firewall'),
+          processes:          on('check_processes'),
+          services:           on('check_services'),
+          vm:                 on('check_vm'),
+          remote:             on('check_remote'),
+          displays:           on('check_displays'),
+          camera:             on('check_camera'),
+          mic:                on('check_mic'),
+          displayControlMode: parseInt(ex.display_control_mode) === 1 ? 1 : 0,
+        };
+      }
+    } catch(e) { /* keep existing _precheckConfig if fetch fails */ }
+  }
+
   // Only show checks enabled by this exam's config
   const CHECK_DEFS = getActiveCheckDefs();
 
