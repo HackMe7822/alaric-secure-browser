@@ -102,7 +102,7 @@ nav{background:var(--nav-bg);color:var(--nav-text);display:flex;align-items:cent
 #content{flex:1;overflow-y:auto;display:flex;align-items:center;justify-content:center;padding:28px 24px;background:var(--bg)}
 
 /* ── Card ────────────────────────────────────────────────────────────────────── */
-.card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);box-shadow:var(--shadow);width:100%;max-width:580px;overflow:hidden}
+.card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);box-shadow:var(--shadow);width:100%;max-width:580px;overflow:hidden;max-height:calc(100vh - 140px)}
 .card-header{padding:28px 32px 0}
 .card-title{font-size:20px;font-weight:800;color:var(--text);letter-spacing:-.02em;margin-bottom:6px}
 .card-sub{font-size:13px;color:var(--text-2);line-height:1.65}
@@ -136,7 +136,7 @@ nav{background:var(--nav-bg);color:var(--nav-text);display:flex;align-items:cent
 .checks-summary.running{background:var(--primary-light);border-color:var(--primary-border);color:var(--primary)}
 .checks-summary.all-pass{background:var(--success-bg);border-color:var(--success-border);color:var(--success)}
 .checks-summary.has-fail{background:var(--danger-bg);border-color:var(--danger-border);color:var(--danger)}
-.checks-list{display:flex;flex-direction:column;gap:6px}
+.checks-list{display:flex;flex-direction:column;gap:6px;overflow-y:auto;max-height:calc(100vh - 320px)}
 .check-item{display:flex;align-items:flex-start;gap:12px;background:var(--surface-2);border:1px solid var(--border);border-radius:var(--radius-sm);padding:11px 14px;transition:border-color .2s}
 .check-item.pass{border-color:var(--success-border);background:var(--success-bg)}
 .check-item.fail{border-color:var(--danger-border);background:var(--danger-bg)}
@@ -281,7 +281,7 @@ nav{background:var(--nav-bg);color:var(--nav-text);display:flex;align-items:cent
     </div>
 
     <!-- Step 2: System Check -->
-    <div class="card" id="panel-2" style="display:none;max-width:660px">
+    <div class="card" id="panel-2" style="display:none;max-width:660px;overflow-y:auto;max-height:calc(100vh - 130px)">
       <div class="card-header">
         <div class="card-title">System Requirements Check</div>
         <div class="card-sub">Verifying your system meets all security requirements. This takes about 15 seconds.</div>
