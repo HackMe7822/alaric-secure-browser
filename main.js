@@ -300,7 +300,14 @@ function startDisplayWatcher() {
   if (_displayAddedHandler) return; // already watching
   _displayAddedHandler = async () => {
     if (!isExamLive) return;
-    // A monitor was connected mid-exam — auto-disconnect it
+    // Notify exam page FIRST so it can set _displayChangeBlur = true before
+    // the focus-loss event fires — this suppresses the spurious tab-switch.
+    if (examWin && !examWin.isDestroyed()) {
+      examWin.webContents.executeJavaScript(
+        `window.dispatchEvent(new CustomEvent('alaric_display_added',{detail:{count:${screen.getAllDisplays().length}}}))`
+      ).catch(() => {});
+    }
+    // Auto-disconnect the extra display
     const fixed = await switchToInternalDisplay();
     if (examWin && !examWin.isDestroyed()) {
       examWin.webContents.send('security-event', {
