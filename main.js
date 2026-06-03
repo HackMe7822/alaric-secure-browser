@@ -503,6 +503,27 @@ function createExamWindow(examUrl) {
   examWin.loadURL(examUrl);
   isExamLive = true;
 
+  // Intercept close to notify the proctor monitor BEFORE the WS socket tears down.
+  // Without this, the WS just drops and the admin sees black screens for 30s.
+  let _notifiedClose = false;
+  examWin.on('close', (event) => {
+    if (_notifiedClose || !examWin || examWin.isDestroyed()) return;
+    event.preventDefault(); // hold the close momentarily
+    _notifiedClose = true;
+    examWin.webContents.executeJavaScript(`
+      (function() {
+        try {
+          if (typeof wsSend === 'function' && typeof state !== 'undefined' && state && state.submissionId) {
+            wsSend({ type: 'exam_submitted', submissionId: state.submissionId, reason: 'browser_closed' });
+          }
+        } catch(e) {}
+      })();
+    `).catch(() => {}).finally(() => {
+      // Give the WS message ~400ms to arrive at the server, then close for real
+      setTimeout(() => { if (examWin && !examWin.isDestroyed()) examWin.close(); }, 400);
+    });
+  });
+
   examWin.on('closed', () => {
     examWin    = null;
     isExamLive = false;
@@ -679,8 +700,7 @@ ipcMain.handle('check-for-update', () => {
 
 ipcMain.handle('close-exam', () => {
   if (examWin && !examWin.isDestroyed()) {
-    isExamLive = false;
-    examWin.destroy();
+    examWin.close(); // triggers close event → sends exam_submitted → then closed event
   }
 });
 
