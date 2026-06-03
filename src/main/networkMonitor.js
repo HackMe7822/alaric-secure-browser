@@ -157,7 +157,10 @@ async function restoreRemoteProtocols() {
 // ─── 2. Kill/close existing remote connections ────────────────────────────────
 // This catches legitimately-named processes (rootkits, renamed tools) that
 // already have an established connection — name-based detection misses these.
-const LOCAL_PREFIXES = ['127.','0.0.0.0','::1','fe80','169.254.','[::','[:'];
+const LOCAL_PREFIXES = ['127.','0.0.0.0','::1','fe80','169.254.','[::','[:', '10.','192.168.','172.16.','172.17.','172.18.','172.19.','172.20.','172.21.','172.22.','172.23.','172.24.','172.25.','172.26.','172.27.','172.28.','172.29.','172.30.','172.31.'];
+// Dedup: track last-reported IPs so the same address doesn't spam every 5s
+const _reportedAt = new Map(); // ip -> timestamp
+const REPORT_COOLDOWN_MS = 60000;
 
 async function killExistingRemoteConnections() {
   if (process.platform !== 'win32') return;
@@ -361,6 +364,7 @@ async function scanConnections() {
       lines = stdout.split('\n').filter(l => l.includes('ESTABLISHED') || l.includes('ESTAB'));
     }
 
+    const now = Date.now();
     const suspicious = [];
     for (const line of lines) {
       const parts = line.trim().split(/\s+/);
@@ -368,6 +372,10 @@ async function scanConnections() {
       const ip = remote.split(':')[0].replace(/[\[\]]/g, '');
       if (!ip || LOCAL_PREFIXES.some(p => ip.startsWith(p))) continue;
       if (_serverIPs.has(ip)) continue;
+      // Dedup — only report each IP once per 60 seconds to prevent log spam
+      const lastSeen = _reportedAt.get(ip) || 0;
+      if (now - lastSeen < REPORT_COOLDOWN_MS) continue;
+      _reportedAt.set(ip, now);
       suspicious.push(remote);
     }
 
@@ -379,7 +387,7 @@ async function scanConnections() {
         type:     'suspicious_connection',
         severity: 'warning',
         message:  `Outbound TCP to non-exam host: ${suspicious.slice(0,3).join(', ')}`,
-        timestamp: Date.now(),
+        timestamp: now,
       });
     }
   } catch {}
@@ -390,6 +398,16 @@ async function start(examServerHost, callback) {
   _callback = callback;
   _serverIPs.clear();
   await resolveHost(examServerHost);
+  // Resolve WebRTC infrastructure so their IPs don't trigger false alarms.
+  // STUN is UDP so won't appear in TCP netstat, but TURN fallback uses TCP/443
+  // to Google infrastructure — without these, every probe triggers an alert.
+  await Promise.allSettled([
+    resolveHost('stun.l.google.com'),
+    resolveHost('stun1.l.google.com'),
+    resolveHost('stun2.l.google.com'),
+    resolveHost('stun3.l.google.com'),
+    resolveHost('stun4.l.google.com'),
+  ]);
 
   // Layer 1: disable all remote access protocols at OS level
   await disableRemoteProtocols();
