@@ -300,24 +300,22 @@ function startDisplayWatcher() {
   if (_displayAddedHandler) return; // already watching
   _displayAddedHandler = async () => {
     if (!isExamLive) return;
-    // Notify exam page FIRST so it can set _displayChangeBlur = true before
-    // the focus-loss event fires — this suppresses the spurious tab-switch.
+    const displayCount = screen.getAllDisplays().length;
     if (examWin && !examWin.isDestroyed()) {
+      // Path 1: CustomEvent (fast, uses count captured before DisplaySwitch)
       examWin.webContents.executeJavaScript(
-        `window.dispatchEvent(new CustomEvent('alaric_display_added',{detail:{count:${screen.getAllDisplays().length}}}))`
+        `window.dispatchEvent(new CustomEvent('alaric_display_added',{detail:{count:${displayCount}}}))`
       ).catch(() => {});
-    }
-    // Auto-disconnect the extra display
-    const fixed = await switchToInternalDisplay();
-    if (examWin && !examWin.isDestroyed()) {
+      // Path 2: security-event IPC — guaranteed delivery, handled by onSecurityEvent
+      // Send IMMEDIATELY (before switchToInternalDisplay) so exam pauses right away
       examWin.webContents.send('security-event', {
         type:     'multi_monitor',
-        message:  fixed
-          ? 'External display connected mid-exam — auto-disconnected'
-          : 'External display detected — please disconnect it to continue',
+        message:  'Extra display connected — exam paused',
         severity: 'critical',
       });
     }
+    // Auto-disconnect the extra display (runs after violation is already sent)
+    await switchToInternalDisplay();
   };
   screen.on('display-added', _displayAddedHandler);
 }
