@@ -749,6 +749,7 @@ ipcMain.handle('start-exam', async (_, { examUrl, examServerHost }) => {
   });
   startDisplayWatcher(); // event-based (may not fire for all connection types)
   startDisplayPoll();    // 1-second poll — catches ALL connection types reliably
+  if (app.isPackaged) autoUpdater.checkForUpdates().catch(() => {});
   if (launcherWin) launcherWin.hide();
   createExamWindow(examUrl);
   return { success: true };

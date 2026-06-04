@@ -1143,11 +1143,11 @@ let _updateBlocking = false;
 let _updateDone     = false;
 let _updatePhase    = '';
 
-// Fallback: if no update event arrives within 5s (IPC timing race on startup), auto-proceed.
+// Fallback: if no update event arrives within 15s (IPC timing race on startup), auto-proceed.
 // Cleared immediately when any real update-status event is received.
 let _updateFallbackTimer = setTimeout(() => {
   if (!_updateDone) hideUpdateScreen();
-}, 5000);
+}, 15000);
 
 function updEl(id) { return document.getElementById(id); }
 
@@ -1183,9 +1183,9 @@ function handleUpdateStatus(d) {
     case 'checking':
       showUpdateScreen('🔍', 'Checking for updates…',
         'Please wait — verifying you have the latest version before proceeding.',
-        null, true); // always show Skip so user is never fully stuck
-      // Hide after 5s if still stuck in checking
-      setTimeout(() => { if (_updatePhase === 'checking') hideUpdateScreen(); }, 5000);
+        null, false);
+      // Hide after 12s if still stuck — only if NOT downloading (timeout fires during 'checking' phase only)
+      setTimeout(() => { if (_updatePhase === 'checking') hideUpdateScreen(); }, 12000);
       break;
 
     case 'current':
