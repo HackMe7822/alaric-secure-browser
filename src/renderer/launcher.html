@@ -246,8 +246,8 @@ nav{background:var(--nav-bg);color:var(--nav-text);display:flex;align-items:cent
     </div>
   </nav>
 
-  <!-- Full-screen update overlay — starts hidden, shown by handleUpdateStatus -->
-  <div id="update-screen" class="hidden">
+  <!-- Full-screen update overlay — visible by default until check completes -->
+  <div id="update-screen">
     <div id="update-screen-icon">🔄</div>
     <h2 id="update-screen-title">Checking for updates…</h2>
     <p id="update-screen-msg">Please wait while we check for the latest version of Alaric Secure Browser.</p>
@@ -542,6 +542,9 @@ document.getElementById('btn-continue-1').onclick = async () => {
   }
 
   hideUrlError();
+
+  // Save URL now — survives any restart/crash between here and exam launch
+  try { localStorage.setItem('alaric_pending_url', raw); } catch {}
 
   // Fetch exam precheck config before advancing to Step 2
   const btn1 = document.getElementById('btn-continue-1');
@@ -1299,26 +1302,13 @@ function endWrCallOnCandidate() {
 }
 
 // ─── Boot ─────────────────────────────────────────────────────────────────────
-// Restore exam URL saved before an auto-update restart.
-// DO NOT delete it here — keep it in localStorage until the exam actually launches
-// so the URL survives multiple restarts (stuck check → close → reopen).
+// Restore exam URL saved when user clicked Continue on Step 1.
+// NOT deleted here — kept until exam actually launches so URL survives
+// multiple restarts (update restart, stuck check, close/reopen).
 try {
   const saved = localStorage.getItem('alaric_pending_url');
-  if (saved) {
-    document.getElementById('exam-url').value = saved;
-    // Note: we do NOT call localStorage.removeItem here anymore.
-    // The item is removed in btn-continue-1 handler ONLY after URL is validated.
-  }
+  if (saved) document.getElementById('exam-url').value = saved;
 } catch {}
-
-// Persist URL to localStorage whenever the user types it — survives any restart
-document.getElementById('exam-url').addEventListener('input', () => {
-  try {
-    const v = document.getElementById('exam-url').value.trim();
-    if (v) localStorage.setItem('alaric_pending_url', v);
-    else localStorage.removeItem('alaric_pending_url');
-  } catch {}
-});
 
 goStep(1);
 document.getElementById('exam-url').focus();
