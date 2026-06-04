@@ -419,11 +419,16 @@ function createLauncher() {
     launcherWin.webContents.once('did-finish-load', () => sendDeepLink(coldLink));
   }
 
+  // Send real version to badge IMMEDIATELY when page loads (before update check)
+  launcherWin.webContents.once('did-finish-load', () => {
+    sendToLauncher('update-status', { phase: 'checking', version: app.getVersion() });
+  });
+
   // Start auto-updater only in production (packaged) builds
   if (app.isPackaged) {
     launcherWin.webContents.once('did-finish-load', () => setupAutoUpdater());
   } else {
-    // Dev mode: send "current" so the version badge still shows
+    // Dev mode: send "current" so Step 1 is available immediately
     launcherWin.webContents.once('did-finish-load', () => {
       sendToLauncher('update-status', { phase: 'dev', version: app.getVersion() });
     });
