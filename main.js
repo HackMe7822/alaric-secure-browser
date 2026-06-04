@@ -298,26 +298,26 @@ async function switchToInternalDisplay() {
 
 function startDisplayWatcher() {
   if (_displayAddedHandler) return; // already watching
-  _displayAddedHandler = async () => {
+  _displayAddedHandler = () => {
     if (!isExamLive) return;
-    // Notify exam page FIRST so it can set _displayChangeBlur = true before
-    // the focus-loss event fires — this suppresses the spurious tab-switch.
+    const count = screen.getAllDisplays().length;
     if (examWin && !examWin.isDestroyed()) {
+      // Dispatch custom event so exam page can set _displayChangeBlur before blur fires
       examWin.webContents.executeJavaScript(
-        `window.dispatchEvent(new CustomEvent('alaric_display_added',{detail:{count:${screen.getAllDisplays().length}}}))`
+        `window.dispatchEvent(new CustomEvent('alaric_display_added',{detail:{count:${count}}}))`
       ).catch(() => {});
-    }
-    // Auto-disconnect the extra display
-    const fixed = await switchToInternalDisplay();
-    if (examWin && !examWin.isDestroyed()) {
+      // Also send via IPC (guaranteed delivery path)
       examWin.webContents.send('security-event', {
         type:     'multi_monitor',
-        message:  fixed
-          ? 'External display connected mid-exam — auto-disconnected'
-          : 'External display detected — please disconnect it to continue',
+        message:  'Extra display connected — please disconnect it to continue',
         severity: 'critical',
       });
     }
+    // Do NOT call switchToInternalDisplay() here — that sets Windows to
+    // "PC screen only" mode which makes subsequent monitor connections
+    // undetectable (getAllDisplays() stays at 1 even when re-connected).
+    // The candidate must physically disconnect; the exam stays paused until
+    // the proctor approves after they remove the monitor.
   };
   screen.on('display-added', _displayAddedHandler);
 }
