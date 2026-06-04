@@ -1,4 +1,34 @@
-const { contextBridge, ipcRenderer } = require('electron');
+const { contextBridge, ipcRenderer, screen: eScreen } = require('electron');
+
+// ── Multi-monitor detection — runs in preload (renderer context with Node.js access)
+// This is the most reliable detection path:
+//   - eScreen.getAllDisplays() is the authoritative Electron API
+//   - Event dispatched directly into the same JS context as the exam page
+//   - No IPC round-trip, no race with DisplaySwitch /internal
+// ──────────────────────────────────────────────────────────────────────────────
+(function setupDisplayWatcher() {
+  let _lastCount = eScreen.getAllDisplays().length;
+
+  function onDisplayChanged() {
+    const count = eScreen.getAllDisplays().length;
+    if (count > _lastCount) {
+      // Dispatch into page context immediately — exam page's alaric_display_added handler fires
+      window.dispatchEvent(new CustomEvent('alaric_display_added', { detail: { count } }));
+    }
+    _lastCount = count;
+  }
+
+  // Event-based: fires for physical HDMI connections
+  eScreen.on('display-added',          onDisplayChanged);
+  eScreen.on('display-metrics-changed', onDisplayChanged);
+
+  // Polling fallback every 1.5s — catches software/virtual displays where events may not fire
+  setInterval(() => {
+    const count = eScreen.getAllDisplays().length;
+    if (count > _lastCount) onDisplayChanged();
+    else _lastCount = count; // allow count to decrease (disconnected)
+  }, 1500);
+})();
 
 contextBridge.exposeInMainWorld('AlaricProctor', {
   // Identity
