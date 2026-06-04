@@ -221,7 +221,7 @@ nav{background:var(--nav-bg);color:var(--nav-text);display:flex;align-items:cent
       <div class="brand-icon">A</div>
       <div>
         <span class="brand-name">Alaric Secure Browser</span>
-        <span class="brand-ver" id="app-ver">v…</span>
+        <span class="brand-ver" id="app-ver">v1.0</span>
       </div>
     </div>
 
@@ -246,8 +246,8 @@ nav{background:var(--nav-bg);color:var(--nav-text);display:flex;align-items:cent
     </div>
   </nav>
 
-  <!-- Full-screen update overlay — visible by default until check completes -->
-  <div id="update-screen">
+  <!-- Full-screen update overlay — starts hidden, shown by handleUpdateStatus -->
+  <div id="update-screen" class="hidden">
     <div id="update-screen-icon">🔄</div>
     <h2 id="update-screen-title">Checking for updates…</h2>
     <p id="update-screen-msg">Please wait while we check for the latest version of Alaric Secure Browser.</p>
@@ -542,9 +542,6 @@ document.getElementById('btn-continue-1').onclick = async () => {
   }
 
   hideUrlError();
-
-  // Save URL now — survives any restart/crash between here and exam launch
-  try { localStorage.setItem('alaric_pending_url', raw); } catch {}
 
   // Fetch exam precheck config before advancing to Step 2
   const btn1 = document.getElementById('btn-continue-1');
@@ -1101,13 +1098,12 @@ function addChat(who, text) {
 
 // ─── Launch exam ──────────────────────────────────────────────────────────────
 async function launchExam() {
-  clearTimeout(_wsReconnect);
+  clearTimeout(_wsReconnect);          // Cancel any pending reconnect
   if (_ws) { _ws.onclose = null; _ws.close(); _ws = null; }
   if (_cameraStream) { _cameraStream.getTracks().forEach(t => t.stop()); _cameraStream = null; }
   if (_camPc) { _camPc.close(); _camPc = null; }
   try {
     await API.startExam(_examUrl, _examHost);
-    // Keep URL in localStorage — user may run another exam session with same link
   } catch(e) {
     addChat('system', '⚠ Failed to launch exam window: ' + (e?.message || String(e)));
   }
@@ -1143,11 +1139,11 @@ let _updateBlocking = false;
 let _updateDone     = false;
 let _updatePhase    = '';
 
-// Fallback: if no update event arrives within 15s (IPC timing race on startup), auto-proceed.
+// Fallback: if no update event arrives within 8s (IPC timing race on startup), auto-proceed.
 // Cleared immediately when any real update-status event is received.
 let _updateFallbackTimer = setTimeout(() => {
   if (!_updateDone) hideUpdateScreen();
-}, 15000);
+}, 8000);
 
 function updEl(id) { return document.getElementById(id); }
 
@@ -1183,9 +1179,9 @@ function handleUpdateStatus(d) {
     case 'checking':
       showUpdateScreen('🔍', 'Checking for updates…',
         'Please wait — verifying you have the latest version before proceeding.',
-        null, false);
-      // Hide after 12s if still stuck — only if NOT downloading (timeout fires during 'checking' phase only)
-      setTimeout(() => { if (_updatePhase === 'checking') hideUpdateScreen(); }, 12000);
+        null, true); // always show Skip so user is never fully stuck
+      // Hide after 8s if still stuck in checking (was 12s — reduced)
+      setTimeout(() => { if (_updatePhase === 'checking') hideUpdateScreen(); }, 8000);
       break;
 
     case 'current':
@@ -1301,12 +1297,13 @@ function endWrCallOnCandidate() {
 }
 
 // ─── Boot ─────────────────────────────────────────────────────────────────────
-// Restore exam URL saved when user clicked Continue on Step 1.
-// NOT deleted here — kept until exam actually launches so URL survives
-// multiple restarts (update restart, stuck check, close/reopen).
+// Restore exam URL saved before an auto-update restart
 try {
   const saved = localStorage.getItem('alaric_pending_url');
-  if (saved) document.getElementById('exam-url').value = saved;
+  if (saved) {
+    document.getElementById('exam-url').value = saved;
+    localStorage.removeItem('alaric_pending_url');
+  }
 } catch {}
 
 goStep(1);
