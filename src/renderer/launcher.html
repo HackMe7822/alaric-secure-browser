@@ -246,8 +246,8 @@ nav{background:var(--nav-bg);color:var(--nav-text);display:flex;align-items:cent
     </div>
   </nav>
 
-  <!-- Full-screen update overlay — shown until check completes or update installs -->
-  <div id="update-screen">
+  <!-- Full-screen update overlay — starts hidden, shown by handleUpdateStatus -->
+  <div id="update-screen" class="hidden">
     <div id="update-screen-icon">🔄</div>
     <h2 id="update-screen-title">Checking for updates…</h2>
     <p id="update-screen-msg">Please wait while we check for the latest version of Alaric Secure Browser.</p>
@@ -1137,7 +1137,13 @@ API?.onProtocolUrl?.((rawUrl) => {
 // ─── Auto-update — FULL SCREEN overlay before Step 1 ─────────────────────────
 let _updateBlocking = false;
 let _updateDone     = false;
-let _updatePhase    = '';   // tracks current phase so 'checking' timeout doesn't fire during 'downloading'
+let _updatePhase    = '';
+
+// Fallback: if no update event arrives within 8s (IPC timing race on startup), auto-proceed.
+// Cleared immediately when any real update-status event is received.
+let _updateFallbackTimer = setTimeout(() => {
+  if (!_updateDone) hideUpdateScreen();
+}, 8000);
 
 function updEl(id) { return document.getElementById(id); }
 
@@ -1164,25 +1170,25 @@ function hideUpdateScreen() {
 function skipUpdate() { hideUpdateScreen(); }
 
 function handleUpdateStatus(d) {
+  clearTimeout(_updateFallbackTimer); // real event arrived — cancel the page-load fallback
   const verEl = updEl('app-ver');
   if (d.version) verEl.textContent = 'v' + d.version;
-  _updatePhase = d.phase; // track phase BEFORE the switch so timeouts can check it
+  _updatePhase = d.phase;
 
   switch (d.phase) {
     case 'checking':
       showUpdateScreen('🔍', 'Checking for updates…',
         'Please wait — verifying you have the latest version before proceeding.',
-        null, false);
-      // Only hide if we're STILL in 'checking' when the timeout fires.
-      // Without this, the timeout fires during 'downloading' and flashes Step 1.
-      setTimeout(() => { if (_updatePhase === 'checking') hideUpdateScreen(); }, 12000);
+        null, true); // always show Skip so user is never fully stuck
+      // Hide after 8s if still stuck in checking (was 12s — reduced)
+      setTimeout(() => { if (_updatePhase === 'checking') hideUpdateScreen(); }, 8000);
       break;
 
     case 'current':
     case 'dev':
       showUpdateScreen('✅', `Up to date — v${d.version}`,
         'You have the latest version. Continuing…', null, false);
-      setTimeout(hideUpdateScreen, 1800);
+      setTimeout(hideUpdateScreen, 1200); // faster — no need to wait long
       break;
 
     case 'available':
