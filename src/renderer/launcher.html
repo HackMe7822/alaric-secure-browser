@@ -1098,12 +1098,14 @@ function addChat(who, text) {
 
 // ─── Launch exam ──────────────────────────────────────────────────────────────
 async function launchExam() {
-  clearTimeout(_wsReconnect);          // Cancel any pending reconnect
+  clearTimeout(_wsReconnect);
   if (_ws) { _ws.onclose = null; _ws.close(); _ws = null; }
   if (_cameraStream) { _cameraStream.getTracks().forEach(t => t.stop()); _cameraStream = null; }
   if (_camPc) { _camPc.close(); _camPc = null; }
+  // Only clear saved URL AFTER exam successfully launches — not before
   try {
     await API.startExam(_examUrl, _examHost);
+    try { localStorage.removeItem('alaric_pending_url'); } catch {}
   } catch(e) {
     addChat('system', '⚠ Failed to launch exam window: ' + (e?.message || String(e)));
   }
@@ -1139,11 +1141,11 @@ let _updateBlocking = false;
 let _updateDone     = false;
 let _updatePhase    = '';
 
-// Fallback: if no update event arrives within 8s (IPC timing race on startup), auto-proceed.
+// Fallback: if no update event arrives within 5s (IPC timing race on startup), auto-proceed.
 // Cleared immediately when any real update-status event is received.
 let _updateFallbackTimer = setTimeout(() => {
   if (!_updateDone) hideUpdateScreen();
-}, 8000);
+}, 5000);
 
 function updEl(id) { return document.getElementById(id); }
 
@@ -1180,8 +1182,8 @@ function handleUpdateStatus(d) {
       showUpdateScreen('🔍', 'Checking for updates…',
         'Please wait — verifying you have the latest version before proceeding.',
         null, true); // always show Skip so user is never fully stuck
-      // Hide after 8s if still stuck in checking (was 12s — reduced)
-      setTimeout(() => { if (_updatePhase === 'checking') hideUpdateScreen(); }, 8000);
+      // Hide after 5s if still stuck in checking
+      setTimeout(() => { if (_updatePhase === 'checking') hideUpdateScreen(); }, 5000);
       break;
 
     case 'current':
@@ -1297,14 +1299,26 @@ function endWrCallOnCandidate() {
 }
 
 // ─── Boot ─────────────────────────────────────────────────────────────────────
-// Restore exam URL saved before an auto-update restart
+// Restore exam URL saved before an auto-update restart.
+// DO NOT delete it here — keep it in localStorage until the exam actually launches
+// so the URL survives multiple restarts (stuck check → close → reopen).
 try {
   const saved = localStorage.getItem('alaric_pending_url');
   if (saved) {
     document.getElementById('exam-url').value = saved;
-    localStorage.removeItem('alaric_pending_url');
+    // Note: we do NOT call localStorage.removeItem here anymore.
+    // The item is removed in btn-continue-1 handler ONLY after URL is validated.
   }
 } catch {}
+
+// Persist URL to localStorage whenever the user types it — survives any restart
+document.getElementById('exam-url').addEventListener('input', () => {
+  try {
+    const v = document.getElementById('exam-url').value.trim();
+    if (v) localStorage.setItem('alaric_pending_url', v);
+    else localStorage.removeItem('alaric_pending_url');
+  } catch {}
+});
 
 goStep(1);
 document.getElementById('exam-url').focus();
