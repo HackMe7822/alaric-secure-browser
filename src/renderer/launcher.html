@@ -1105,10 +1105,9 @@ async function launchExam() {
   if (_ws) { _ws.onclose = null; _ws.close(); _ws = null; }
   if (_cameraStream) { _cameraStream.getTracks().forEach(t => t.stop()); _cameraStream = null; }
   if (_camPc) { _camPc.close(); _camPc = null; }
-  // Only clear saved URL AFTER exam successfully launches — not before
   try {
     await API.startExam(_examUrl, _examHost);
-    try { localStorage.removeItem('alaric_pending_url'); } catch {}
+    // Keep URL in localStorage — user may run another exam session with same link
   } catch(e) {
     addChat('system', '⚠ Failed to launch exam window: ' + (e?.message || String(e)));
   }
