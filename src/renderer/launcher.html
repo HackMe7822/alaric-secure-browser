@@ -1016,6 +1016,9 @@ function handleWsMsg(msg) {
   if (msg.type === 'proctor_chat')   addChat('proctor', msg.message);
   if (msg.type === 'camera_answer')  handleCameraAnswer(msg.answer);
   if (msg.type === 'camera_ice' && msg.dir === 'admin_to_candidate') handleCameraIce(msg.candidate);
+  if (msg.type === 'proctor_wr_call_offer') handleWrCall(msg);
+  if (msg.type === 'proctor_wr_call_ice' && msg.dir === 'admin_to_waiting') handleWrCallIce(msg.candidate);
+  if (msg.type === 'proctor_wr_call_end')  endWrCallOnCandidate();
   if (msg.type === 'start_exam') {
     addChat('system', '✓ Proctor has started your exam. Launching now…');
     setTimeout(launchExam, 1500);
@@ -1237,6 +1240,55 @@ document.getElementById('btn-continue-1').onclick = async function(e) {
   }
   if (_origContinue1) await _origContinue1.call(this, e);
 };
+
+// ─── Proctor → Candidate audio call in waiting room ──────────────────────────
+let _wrCallPc = null;
+let _wrCallIce = [];
+
+async function handleWrCall(msg) {
+  endWrCallOnCandidate();
+  _wrCallIce = [];
+  const pc = new RTCPeerConnection({
+    iceServers: [{ urls: 'stun:stun.l.google.com:19302' }, { urls: 'stun:stun1.l.google.com:19302' }]
+  });
+  _wrCallPc = pc;
+
+  pc.ontrack = e => {
+    // Play proctor's audio
+    let aud = document.getElementById('_wr_proctor_audio');
+    if (!aud) {
+      aud = document.createElement('audio');
+      aud.id = '_wr_proctor_audio'; aud.autoplay = true;
+      document.body.appendChild(aud);
+    }
+    aud.srcObject = e.streams[0];
+    aud.play().catch(() => {});
+    addChat('system', '📞 Proctor is speaking — you can hear them now');
+  };
+
+  pc.onicecandidate = ({ candidate }) => {
+    if (candidate) wsSend({ type: 'proctor_wr_call_ice', candidate, dir: 'waiting_to_admin' });
+  };
+
+  try {
+    await pc.setRemoteDescription(new RTCSessionDescription(msg.offer));
+    for (const c of _wrCallIce) { try { await pc.addIceCandidate(new RTCIceCandidate(c)); } catch {} }
+    _wrCallIce = [];
+    const answer = await pc.createAnswer();
+    await pc.setLocalDescription(answer);
+    wsSend({ type: 'proctor_wr_call_answer', answer: pc.localDescription });
+  } catch(e) { endWrCallOnCandidate(); }
+}
+
+async function handleWrCallIce(candidate) {
+  if (!_wrCallPc || !_wrCallPc.remoteDescription) { _wrCallIce.push(candidate); return; }
+  try { await _wrCallPc.addIceCandidate(new RTCIceCandidate(candidate)); } catch {}
+}
+
+function endWrCallOnCandidate() {
+  if (_wrCallPc) { try { _wrCallPc.close(); } catch {} _wrCallPc = null; }
+  document.getElementById('_wr_proctor_audio')?.remove();
+}
 
 // ─── Boot ─────────────────────────────────────────────────────────────────────
 // Restore exam URL saved before an auto-update restart
