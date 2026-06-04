@@ -256,6 +256,8 @@ function sendDeepLink(url) {
 let _displayAddedHandler    = null;
 let _displayWasExtended     = false;
 let _restoringFullscreen    = false; // module-level — must NOT be inside createExamWindow()
+let _displayPollInterval    = null;  // polls display count every 1s during exam
+let _lastDisplayCount       = 1;     // baseline count when exam started
 
 async function switchToInternalDisplay() {
   if (process.platform !== 'win32') return false;
@@ -294,6 +296,32 @@ async function switchToInternalDisplay() {
   } catch {}
 
   return false;
+}
+
+// Main-process display poll — catches ALL connection types (HDMI, USB, wireless)
+// where screen.on('display-added') may not fire reliably.
+function startDisplayPoll() {
+  if (_displayPollInterval) return;
+  _lastDisplayCount = screen.getAllDisplays().length;
+  _displayPollInterval = setInterval(() => {
+    if (!isExamLive || !examWin || examWin.isDestroyed()) return;
+    const count = screen.getAllDisplays().length;
+    if (count > _lastDisplayCount) {
+      // New monitor detected — notify exam page via IPC immediately
+      examWin.webContents.send('security-event', {
+        type: 'multi_monitor',
+        message: `Extra display connected (${count} monitors detected) — exam paused`,
+        severity: 'critical',
+      });
+      // Also try to auto-disconnect
+      switchToInternalDisplay().catch(() => {});
+    }
+    _lastDisplayCount = count;
+  }, 1000);
+}
+
+function stopDisplayPoll() {
+  if (_displayPollInterval) { clearInterval(_displayPollInterval); _displayPollInterval = null; }
 }
 
 function startDisplayWatcher() {
@@ -526,6 +554,7 @@ function createExamWindow(examUrl) {
     examWin    = null;
     isExamLive = false;
     stopSecurity();
+    stopDisplayPoll();
     machineCheck.stopWatchdog();
     stopDisplayWatcher();
     machineCheck.restoreAll().catch(() => {});
@@ -718,7 +747,8 @@ ipcMain.handle('start-exam', async (_, { examUrl, examServerHost }) => {
   machineCheck.startWatchdog((ev) => {
     if (examWin && !examWin.isDestroyed()) examWin.webContents.send('security-event', ev);
   });
-  startDisplayWatcher(); // auto-disconnect any monitor plugged in mid-exam
+  startDisplayWatcher(); // event-based (may not fire for all connection types)
+  startDisplayPoll();    // 1-second poll — catches ALL connection types reliably
   if (launcherWin) launcherWin.hide();
   createExamWindow(examUrl);
   return { success: true };
